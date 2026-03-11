@@ -61,7 +61,7 @@ class DatasetGenerationSettings:
     DATASET_ROOT = "dataset"
     
     # Dataset
-    NUM_IMAGES = 2000
+    NUM_IMAGES = 200
     TRAIN_SPLIT = 0.8          # 80% train, 20% val
     NEGATIVE_RATIO = 0.35      # percentuale immagini senza fuoco
     
