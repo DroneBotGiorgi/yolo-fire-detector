@@ -4,12 +4,14 @@ import os
 import random
 import numpy as np
 
+from settings import DatasetGenerationSettings
+
 # ============================================================
 # SETTINGS VIEWER
 # ============================================================
 
 SETTINGS = {
-    "dataset_root": "dataset",
+    "dataset_root": DatasetGenerationSettings.DATASET_ROOT,
     "split": "train",       # "train" oppure "val"
     "num_samples": 9,       # quante immagini mostrare
     "thumb_size": 280,      # dimensione miniatura
