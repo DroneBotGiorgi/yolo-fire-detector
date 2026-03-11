@@ -4,19 +4,7 @@ import os
 import random
 import numpy as np
 
-from settings import DatasetGenerationSettings
-
-# ============================================================
-# SETTINGS VIEWER
-# ============================================================
-
-SETTINGS = {
-    "dataset_root": DatasetGenerationSettings.DATASET_ROOT,
-    "split": "train",       # "train" oppure "val"
-    "num_samples": 9,       # quante immagini mostrare
-    "thumb_size": 280,      # dimensione miniatura
-    "draw_title": True,     # scrive il nome file sopra
-}
+from settings import ViewerSettings
 
 
 def load_sample_paths(dataset_root: str, split: str) -> list[str]:
@@ -139,15 +127,15 @@ def main():
     import numpy as np
 
     img_paths = load_sample_paths(
-        SETTINGS["dataset_root"],
-        SETTINGS["split"]
+        ViewerSettings.DATASET_ROOT,
+        ViewerSettings.SPLIT
     )
 
     if len(img_paths) == 0:
         print("Nessuna immagine trovata.")
         return
 
-    sample_count = min(SETTINGS["num_samples"], len(img_paths))
+    sample_count = min(ViewerSettings.NUM_SAMPLES, len(img_paths))
     chosen = random.sample(img_paths, sample_count)
 
     thumbs = []
@@ -159,9 +147,9 @@ def main():
 
         label_path = corresponding_label_path(img_path)
         img = draw_yolo_bbox(img, label_path)
-        img = cv2.resize(img, (SETTINGS["thumb_size"], SETTINGS["thumb_size"]))
+        img = cv2.resize(img, (ViewerSettings.THUMB_SIZE, ViewerSettings.THUMB_SIZE))
 
-        if SETTINGS["draw_title"]:
+        if ViewerSettings.DRAW_TITLE:
             img = add_filename_title(img, os.path.basename(img_path))
 
         thumbs.append(img)

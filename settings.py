@@ -1,9 +1,10 @@
 """
 Configuration settings for YOLO Fire Detector Dataset Generator
 
-Contains two main configuration classes:
+Contains three main configuration classes:
 - ImageTransformSettings: Parameters for image augmentation and transformations
 - DatasetGenerationSettings: Parameters for dataset generation (paths, sizes, splits)
+- ViewerSettings: Parameters for dataset visualization
 """
 
 
@@ -73,3 +74,16 @@ class DatasetGenerationSettings:
     # Demo
     DEMO_MODE = False
     DEMO_WAIT_MS = 150
+
+
+class ViewerSettings:
+    """Impostazioni per il visualizzatore del dataset."""
+    
+    # Dataset
+    DATASET_ROOT = "dataset"
+    SPLIT = "train"  # "train" oppure "val"
+    
+    # Visualizzazione
+    NUM_SAMPLES = 9       # quante immagini mostrare
+    THUMB_SIZE = 280      # dimensione miniatura
+    DRAW_TITLE = True     # scrive il nome file sopra
