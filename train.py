@@ -73,9 +73,6 @@ def train_model(
         resume: Se True, riprende da checkpoint esistente
     """
 
-    # Setup ambiente cloud
-    setup_cloud_environment()
-
     # Verifica che il dataset esista
     dataset_root = DatasetGenerationSettings.DATASET_ROOT
     if not os.path.exists(dataset_root):

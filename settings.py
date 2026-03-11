@@ -24,7 +24,7 @@ class ImageTransformSettings:
     CONTRAST_ALPHA_MAX = 1.40
     
     # Colore
-    ENABLE_COLOR_SHIFT = True
+    ENABLE_COLOR_SHIFT = False
     COLOR_SHIFT_PROB = 0.35
     COLOR_SHIFT_HUE_MAX = 20
     
@@ -61,7 +61,7 @@ class DatasetGenerationSettings:
     DATASET_ROOT = "dataset"
     
     # Dataset
-    NUM_IMAGES = 200
+    NUM_IMAGES = 100
     TRAIN_SPLIT = 0.8          # 80% train, 20% val
     NEGATIVE_RATIO = 0.35      # percentuale immagini senza fuoco
     
@@ -98,7 +98,7 @@ class TrainingSettings:
     DEVICE = "cpu"        # Device per training: 'cpu' o numero GPU (0, 1, 2, ...)
     
     # === TRAINING ===
-    EPOCHS = 100          # Numero totale di epoche di training
+    EPOCHS = 10          # Numero totale di epoche di training
     BATCH_SIZE = 16       # Batch size per step di training
     IMAGE_SIZE = 640      # Dimensione delle immagini di input (pixels)
     PATIENCE = 10         # Early stopping patience (epoche senza miglioramento)
