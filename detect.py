@@ -1,9 +1,11 @@
 """
 Fire Detection script using YOLOv8
 
-Detects fire in real-time from either:
+Detects fire in real-time from multiple sources:
 1. Webcam
-2. RTMP stream
+2. RTMP/RTSP streams
+3. Video files
+4. Static images (for testing/validation)
 
 Usage:
     # Detection from webcam (default)
@@ -12,18 +14,19 @@ Usage:
     # Detection from RTMP stream
     python detect.py --source rtmp://server/app/stream
     
-    # Detection from file
+    # Detection from video file
     python detect.py --source video.mp4
     
-    # With custom model
-    python detect.py --weights best.pt
+    # Test on static images (validation set)
+    python detect.py --source dataset/images/val/
     
-    # Confidence threshold
-    python detect.py --conf 0.5
+    # With custom model and confidence
+    python detect.py --source dataset/images/val/ --weights best.pt --conf 0.6
 
 Controls:
     - Press 'q' or 'ESC' to quit
     - Press 's' to save current frame with detections
+    - For image testing: Use arrow keys to navigate
 """
 
 from ultralytics import YOLO
@@ -42,7 +45,7 @@ class FireDetector:
         self,
         model_path: str = "fire_detector_runs/train/weights/best.pt",
         conf_threshold: float = 0.5,
-        device: int = 0,
+        device: str = "cpu",
     ):
         """
         Inizializza il detector.
@@ -50,7 +53,7 @@ class FireDetector:
         Args:
             model_path: Percorso del modello YOLOv8
             conf_threshold: Soglia di confidenza per le detections
-            device: GPU device id (0 per la prima GPU, -1 per CPU)
+            device: Device per inference ('cpu' o numero GPU come stringa)
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(
@@ -69,7 +72,7 @@ class FireDetector:
         
         print(f"✓ Modello caricato con successo")
         print(f"  Soglia di confidenza: {conf_threshold}")
-        print(f"  Device: {'GPU' if device >= 0 else 'CPU'}")
+        print(f"  Device: {'GPU' if device != 'cpu' else 'CPU'}")
     
     def detect_frame(self, frame: np.ndarray) -> tuple:
         """
@@ -410,6 +413,98 @@ class FireDetector:
             print(f"\n✓ Detection completata: {frame_num} frame processati")
 
 
+    def test_on_images(self, images_folder: str) -> None:
+        """
+        Testa il modello su immagini statiche da una cartella.
+        
+        Args:
+            images_folder: Percorso della cartella contenente le immagini
+        """
+        if not os.path.exists(images_folder):
+            raise FileNotFoundError(f"Cartella non trovata: {images_folder}")
+        
+        # Trova tutte le immagini
+        image_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
+        image_paths = []
+        
+        for file in os.listdir(images_folder):
+            if any(file.lower().endswith(ext) for ext in image_extensions):
+                image_paths.append(os.path.join(images_folder, file))
+        
+        if not image_paths:
+            print(f"Nessuna immagine trovata nella cartella: {images_folder}")
+            return
+        
+        image_paths.sort()  # Ordina alfabeticamente
+        
+        print("\n" + "="*60)
+        print("TEST SU IMMAGINI STATICHE")
+        print("="*60)
+        print(f"Cartella: {images_folder}")
+        print(f"Immagini trovate: {len(image_paths)}")
+        print("Controlli:")
+        print("  ← → : Naviga tra le immagini")
+        print("  's' : Salva immagine corrente")
+        print("  'q' o ESC: Esci")
+        print("="*60 + "\n")
+        
+        current_idx = 0
+        
+        while True:
+            # Carica immagine corrente
+            img_path = image_paths[current_idx]
+            img = cv2.imread(img_path)
+            
+            if img is None:
+                print(f"Errore nel caricamento: {img_path}")
+                current_idx = (current_idx + 1) % len(image_paths)
+                continue
+            
+            # Ridimensiona se troppo grande per il display
+            height, width = img.shape[:2]
+            max_display_size = 1200
+            if max(height, width) > max_display_size:
+                scale = max_display_size / max(height, width)
+                img = cv2.resize(img, None, fx=scale, fy=scale)
+            
+            # Esegui detection
+            annotated_img, detections = self.detect_frame(img)
+            
+            # Aggiungi info
+            annotated_img = self.draw_info(annotated_img, detections)
+            
+            # Aggiungi nome file e contatore
+            filename = os.path.basename(img_path)
+            info_text = f"{filename} ({current_idx + 1}/{len(image_paths)})"
+            cv2.putText(
+                annotated_img,
+                info_text,
+                (10, annotated_img.shape[0] - 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                1
+            )
+            
+            # Mostra immagine
+            cv2.imshow("Fire Detection - Test Images", annotated_img)
+            
+            # Gestisci input
+            key = cv2.waitKey(0) & 0xFF
+            
+            if key in [ord('q'), 27]:  # 'q' o ESC
+                break
+            elif key == ord('s'):  # Salva
+                self.save_frame(annotated_img, detections)
+            elif key == 81:  # Freccia sinistra (←)
+                current_idx = (current_idx - 1) % len(image_paths)
+            elif key == 83:  # Freccia destra (→)
+                current_idx = (current_idx + 1) % len(image_paths)
+        
+        cv2.destroyAllWindows()
+        print("\n✓ Test su immagini completato")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Real-time Fire Detection using YOLOv8",
@@ -420,6 +515,7 @@ Examples:
   python detect.py --source 0                   # Webcam con ID 0
   python detect.py --source rtmp://example.com/live/stream   # RTMP stream
   python detect.py --source video.mp4           # File video
+  python detect.py --source dataset/images/val/ # Test su immagini validation
   python detect.py --weights best.pt            # Modello personalizzato
   python detect.py --conf 0.6                   # Soglia confidenza 0.6
         """
@@ -429,7 +525,7 @@ Examples:
         "--source",
         type=str,
         default="0",
-        help="Sorgente (0=webcam, RTMP URL, o path file video) (default: 0)"
+        help="Sorgente: numero=webcam, RTMP/RTSP URL=stream, path file=video, path cartella=immagini"
     )
     parser.add_argument(
         "--weights",
@@ -445,9 +541,9 @@ Examples:
     )
     parser.add_argument(
         "--device",
-        type=int,
-        default=0,
-        help="GPU device id (default: 0, use -1 for CPU)"
+        type=str,
+        default="cpu",
+        help="Device per inference: 'cpu' o numero GPU (default: cpu)"
     )
     
     args = parser.parse_args()
@@ -468,13 +564,27 @@ Examples:
             camera_id = int(source)
             detector.run_webcam(camera_id=camera_id)
         
-        # Se inizia con rtmp://, è uno stream RTMP
-        elif source.startswith("rtmp://"):
+        # Se inizia con rtmp:// o rtsp://, è uno stream
+        elif source.startswith(("rtmp://", "rtsp://")):
             detector.run_rtmp(rtmp_url=source)
         
-        # Altrimenti è un file
-        else:
+        # Se è una cartella esistente, testa su immagini statiche
+        elif os.path.isdir(source):
+            detector.test_on_images(images_folder=source)
+        
+        # Se è un file esistente, è un video
+        elif os.path.isfile(source):
             detector.run_video_file(video_path=source)
+        
+        # Altrimenti errore
+        else:
+            print(f"❌ Sorgente non riconosciuta: {source}")
+            print("Tipi supportati:")
+            print("  - Numero (es: 0, 1): Webcam")
+            print("  - URL RTMP/RTSP: Stream video")
+            print("  - Path cartella: Immagini statiche")
+            print("  - Path file: Video locale")
+            exit(1)
     
     except FileNotFoundError as e:
         print(f"\n❌ Errore: {e}")
