@@ -4,19 +4,22 @@ Training script for YOLO Fire Detector
 Trains a YOLOv8 model to detect fire using the generated synthetic dataset.
 
 Usage:
-    python train.py
+    python train.py [options]
     
 Configuration:
-    - Model: YOLOv8n (nano), YOLOv8s (small), YOLOv8m (medium), YOLOv8l (large)
-    - Epochs: 100
-    - Image size: 640
-    - Batch size: 16
-    - Dataset: dataset/ (created by generator.py)
+    All training parameters are centralized in TrainingSettings class.
+    Command line arguments can override the default settings.
+    
+    Model sizes: 'n' (nano), 's' (small), 'm' (medium), 'l' (large)
+    Default model: YOLOv8n
+    Default epochs: 100
+    Default image size: 640
+    Default batch size: 16
 """
 
 from ultralytics import YOLO
 import os
-from settings import DatasetGenerationSettings
+from settings import DatasetGenerationSettings, TrainingSettings
 
 
 def create_dataset_yaml() -> str:
@@ -51,23 +54,21 @@ names: ['fire']  # class names
 
 
 def train_model(
-    model_size: str = "n",
-    epochs: int = 100,
-    batch_size: int = 16,
-    image_size: int = 640,
-    patience: int = 10,
-    device: int = 0,
+    model_size: str = TrainingSettings.MODEL_SIZE,
+    epochs: int = TrainingSettings.EPOCHS,
+    batch_size: int = TrainingSettings.BATCH_SIZE,
+    image_size: int = TrainingSettings.IMAGE_SIZE,
+    device: int = TrainingSettings.DEVICE,
 ) -> None:
     """
     Addestra il modello YOLO sulla detection del fuoco.
     
     Args:
-        model_size: Dimensione del modello ('n', 's', 'm', 'l')
-        epochs: Numero di epoche di training
-        batch_size: Batch size per il training
-        image_size: Dimensione delle immagini di input
-        patience: Patience per early stopping
-        device: GPU device id (0 per la prima GPU, -1 per CPU)
+        model_size: Dimensione del modello ('n', 's', 'm', 'l') - default da TrainingSettings
+        epochs: Numero di epoche di training - default da TrainingSettings
+        batch_size: Batch size per il training - default da TrainingSettings
+        image_size: Dimensione delle immagini di input - default da TrainingSettings
+        device: GPU device id - default da TrainingSettings
     """
     
     # Verifica che il dataset esista
@@ -104,28 +105,26 @@ def train_model(
         epochs=epochs,
         imgsz=image_size,
         batch=batch_size,
-        patience=patience,
+        patience=TrainingSettings.PATIENCE,
         device=device,
-        project="fire_detector_runs",
-        name="train",
-        exist_ok=True,
-        verbose=True,
+        project=TrainingSettings.PROJECT_NAME,
+        name=TrainingSettings.EXPERIMENT_NAME,
+        exist_ok=TrainingSettings.OVERWRITE_EXISTING,
+        verbose=TrainingSettings.VERBOSE,
         # Hyperparameters
-        lr0=0.01,
-        lrf=0.01,
-        momentum=0.937,
-        weight_decay=0.0005,
+        lr0=TrainingSettings.LEARNING_RATE_INIT,
+        lrf=TrainingSettings.LEARNING_RATE_FINAL,
+        momentum=TrainingSettings.MOMENTUM,
+        weight_decay=TrainingSettings.WEIGHT_DECAY,
         # Augmentation
-        degrees=15,
-        translate=0.1,
-        scale=0.5,
-        flipud=0.5,
-        fliplr=0.5,
-        mosaic=1.0,
+        degrees=TrainingSettings.ROTATION_DEGREES,
+        translate=TrainingSettings.TRANSLATE,
+        scale=TrainingSettings.SCALE,
+        flipud=TrainingSettings.FLIP_VERTICAL,
+        fliplr=TrainingSettings.FLIP_HORIZONTAL,
+        mosaic=TrainingSettings.MOSAIC,
         # Mixed Precision
-        amp=True,
-        # Early Stopping
-        patience=patience,
+        amp=TrainingSettings.MIXED_PRECISION,
     )
     
     print("\n" + "="*60)
@@ -174,33 +173,33 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="n",
+        default=TrainingSettings.MODEL_SIZE,
         choices=["n", "s", "m", "l"],
-        help="Dimensione del modello YOLOv8 (default: n)"
+        help=f"Dimensione del modello YOLOv8 (default: {TrainingSettings.MODEL_SIZE})"
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=100,
-        help="Numero di epoche (default: 100)"
+        default=TrainingSettings.EPOCHS,
+        help=f"Numero di epoche (default: {TrainingSettings.EPOCHS})"
     )
     parser.add_argument(
         "--batch",
         type=int,
-        default=16,
-        help="Batch size (default: 16)"
+        default=TrainingSettings.BATCH_SIZE,
+        help=f"Batch size (default: {TrainingSettings.BATCH_SIZE})"
     )
     parser.add_argument(
         "--imgsz",
         type=int,
-        default=640,
-        help="Image size (default: 640)"
+        default=TrainingSettings.IMAGE_SIZE,
+        help=f"Image size (default: {TrainingSettings.IMAGE_SIZE})"
     )
     parser.add_argument(
         "--device",
         type=int,
-        default=0,
-        help="GPU device id (default: 0)"
+        default=TrainingSettings.DEVICE,
+        help=f"GPU device id (default: {TrainingSettings.DEVICE})"
     )
     parser.add_argument(
         "--val-only",
