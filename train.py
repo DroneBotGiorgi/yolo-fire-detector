@@ -149,6 +149,27 @@ def train_model(
     print(f"Modello salvato in: runs/detect/fire_detector_runs/train/weights/best.pt")
     print(f"Risultati disponibili in: runs/detect/fire_detector_runs/train/")
 
+    # --- export finale ------------------------------------------------
+    final_dir = os.path.join(TrainingSettings.PROJECT_NAME, TrainingSettings.EXPERIMENT_NAME, "final_export")
+    os.makedirs(final_dir, exist_ok=True)
+    final_model_path = os.path.join(final_dir, "best.pt")
+    print(f"\n🔧 Copio il modello finale in: {final_model_path}")
+    # copia file pesi
+    import shutil
+    shutil.copy(
+        os.path.join(TrainingSettings.PROJECT_NAME, TrainingSettings.EXPERIMENT_NAME, "weights", "best.pt"),
+        final_model_path,
+    )
+    # serializza le impostazioni usate in un file di testo
+    cfg_path = os.path.join(final_dir, "training_settings.txt")
+    with open(cfg_path, "w") as cfgf:
+        cfgf.write("# Training settings utilizzate\n")
+        for attr in dir(TrainingSettings):
+            if attr.isupper():
+                cfgf.write(f"{attr} = {getattr(TrainingSettings, attr)}\n")
+    print(f"⚙️ Impostazioni di training salvate in: {cfg_path}")
+    print("📁 Cartella finale pronta per essere copiata su un'altra macchina")
+
 
 def validate_model(model_path: str = "runs/detect/fire_detector_runs/train/weights/best.pt") -> None:
     """
