@@ -20,8 +20,8 @@ DEFAULT_EXCLUDES = {
 DEFAULT_INCLUDE_NAMES = {
     "README.md",
     "CLOUD_TRAINING.md",
+    "TRAINING_PRESETS.md",
     "requirements.txt",
-    "yolov8n.pt",
 }
 
 DEFAULT_INCLUDE_SUFFIXES = {
@@ -45,6 +45,8 @@ def should_skip(path: Path, include_dataset: bool, include_runs: bool) -> bool:
 
 def should_include(path: Path) -> bool:
     if path.name in DEFAULT_INCLUDE_NAMES or path.suffix.lower() in DEFAULT_INCLUDE_SUFFIXES:
+        return True
+    if path.suffix.lower() == ".pt" and len(path.parts) == 1:
         return True
     return "base_fire_images" in path.parts and path.suffix.lower() == ".png"
 

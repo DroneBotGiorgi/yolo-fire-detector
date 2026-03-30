@@ -1,29 +1,45 @@
 """Training utilities for the YOLO Fire Detector project."""
 
-import json
 import os
-import shutil
+from pathlib import Path
+
+import yaml
 
 from ultralytics import YOLO
 
 from settings import DatasetGenerationSettings, TrainingSettings
 
 
+def portable_path(path: str | Path, root: str | Path | None = None) -> str:
+    """Serialize a path relative to a chosen root when possible."""
+    resolved_path = Path(path).resolve()
+    if root is not None:
+        try:
+            return resolved_path.relative_to(Path(root).resolve()).as_posix()
+        except ValueError:
+            pass
+    return resolved_path.as_posix()
+
+
 def create_dataset_yaml(dataset_root: str = DatasetGenerationSettings.DATASET_ROOT) -> str:
-    """Crea il file data.yaml richiesto da YOLO."""
-    yaml_path = os.path.join(dataset_root, "data.yaml")
-    yaml_content = f"""path: {os.path.abspath(dataset_root)}
-train: images/train
-val: images/val
-
-nc: 1
-names: ['fire']
-"""
-
+    """Crea il file yolo_dataset.yaml richiesto da YOLO."""
+    yaml_path = os.path.join(dataset_root, "yolo_dataset.yaml")
+    dataset_path = Path(os.path.relpath(os.path.abspath(dataset_root), os.getcwd())).as_posix()
     with open(yaml_path, "w", encoding="utf-8") as handle:
-        handle.write(yaml_content)
+        yaml.safe_dump(
+            {
+                "path": dataset_path,
+                "train": "images/train",
+                "val": "images/val",
+                "nc": 1,
+                "names": ["fire"],
+            },
+            handle,
+            sort_keys=False,
+            allow_unicode=False,
+        )
 
-    print(f"✓ Dataset YAML creato: {yaml_path}")
+    print(f"✓ Config dataset YOLO creata: {yaml_path}")
     return yaml_path
 
 
@@ -45,29 +61,15 @@ def validate_dataset(dataset_root: str) -> None:
 
 def export_training_artifacts(
     run_dir: str,
-    export_dir: str | None,
     training_summary: dict,
 ) -> str:
-    """Copia il modello finale e serializza i parametri usati."""
-    resolved_export_dir = export_dir or os.path.join(run_dir, "final_export")
-    os.makedirs(resolved_export_dir, exist_ok=True)
+    """Serializza i parametri effettivi del training nella root della run."""
+    yaml_path = os.path.join(run_dir, "training_run.yaml")
+    with open(yaml_path, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(training_summary, handle, sort_keys=False, allow_unicode=False)
 
-    best_weights_path = os.path.join(run_dir, "weights", "best.pt")
-    final_model_path = os.path.join(resolved_export_dir, "best.pt")
-    shutil.copy(best_weights_path, final_model_path)
-
-    txt_path = os.path.join(resolved_export_dir, "training_settings.txt")
-    with open(txt_path, "w", encoding="utf-8") as handle:
-        handle.write("# Training settings utilizzate\n")
-        for key, value in training_summary.items():
-            handle.write(f"{key} = {value}\n")
-
-    json_path = os.path.join(resolved_export_dir, "training_run.json")
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(training_summary, handle, indent=2)
-
-    print(f"📦 Export finale disponibile in: {resolved_export_dir}")
-    return resolved_export_dir
+    print(f"🧾 Metadata training scritti in: {yaml_path}")
+    return yaml_path
 
 
 def train_model(
@@ -81,10 +83,9 @@ def train_model(
     project_name: str = TrainingSettings.PROJECT_NAME,
     experiment_name: str = TrainingSettings.EXPERIMENT_NAME,
     weights: str | None = None,
-    export_dir: str | None = None,
     extra_summary: dict | None = None,
 ) -> str:
-    """Addestra il modello YOLO e restituisce la cartella di export finale."""
+    """Addestra il modello YOLO e restituisce la cartella della run."""
     validate_dataset(dataset_root)
     yaml_path = create_dataset_yaml(dataset_root)
 
@@ -136,9 +137,10 @@ def train_model(
     print("Training completato")
     print("=" * 60)
 
+    persistent_root = Path(project_name).resolve().parent
     summary = {
-        "dataset_root": os.path.abspath(dataset_root),
-        "project_name": project_name,
+        "dataset_root": portable_path(dataset_root, persistent_root),
+        "project_name": portable_path(project_name, persistent_root),
         "experiment_name": experiment_name,
         "model_size": model_size,
         "weights": base_weights,
@@ -154,22 +156,8 @@ def train_model(
         if attr.isupper():
             summary[f"TrainingSettings.{attr}"] = getattr(TrainingSettings, attr)
 
-    final_export_dir = export_training_artifacts(run_dir, export_dir, summary)
-
-    try:
-        import google.colab  # type: ignore
-
-        print("\n" + "=" * 60)
-        print("GOOGLE COLAB - COMANDI DI DOWNLOAD")
-        print("=" * 60)
-        print("from google.colab import files")
-        print(f"files.download('{final_export_dir}/best.pt')")
-        print(f"files.download('{final_export_dir}/training_run.json')")
-        print("=" * 60)
-    except ImportError:
-        pass
-
-    return final_export_dir
+    export_training_artifacts(run_dir, summary)
+    return run_dir
 
 
 def validate_model(

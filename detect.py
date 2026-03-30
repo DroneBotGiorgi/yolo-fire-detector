@@ -34,37 +34,58 @@ import cv2
 import numpy as np
 import argparse
 import importlib
-import json
 import os
 from pathlib import Path
 from datetime import datetime
 import threading
 import time
 
+import yaml
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def resolve_portable_artifact_path(path_value: str, pointer_path: Path) -> str:
+    """Resolve a relative artifact path from the persistent root or keep absolute paths."""
+    candidate = Path(path_value)
+    if candidate.is_absolute():
+        return str(candidate)
+    persistent_root = pointer_path.parent.parent
+    return str((persistent_root / candidate).resolve())
+
+
+def load_pointer_payload(path: Path) -> dict | None:
+    """Load YAML metadata payloads."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError):
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
 
 def resolve_default_model_path() -> str:
     """Resolve the preferred trained model path from the persistent registry."""
     candidate_files = [
-        Path("artifacts/local/models/latest.json"),
-        Path("artifacts/cloud/models/latest.json"),
-        Path("runs/detect/fire_detector_runs/train/weights/best.pt"),
+        PROJECT_ROOT / "artifacts/local/exports/latest.yaml",
+        PROJECT_ROOT / "artifacts/cloud/exports/latest.yaml",
     ]
 
     for candidate in candidate_files:
-        if candidate.suffix == ".json" and candidate.exists():
-            try:
-                with open(candidate, "r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-                model_path = payload.get("model_path")
-                if model_path and os.path.exists(model_path):
-                    return model_path
-            except (OSError, json.JSONDecodeError):
+        if candidate.suffix.lower() in {".yaml", ".yml"} and candidate.exists():
+            payload = load_pointer_payload(candidate)
+            if payload is None:
                 continue
 
-        if candidate.suffix != ".json" and candidate.exists():
-            return str(candidate)
+            model_path = payload.get("model_path")
+            if isinstance(model_path, str):
+                resolved_model_path = resolve_portable_artifact_path(model_path, candidate)
+                if os.path.exists(resolved_model_path):
+                    return resolved_model_path
 
-    return "artifacts/local/models/latest.json"
+    return str(PROJECT_ROOT / "artifacts/local/exports/latest.yaml")
 
 
 class FireDetector:

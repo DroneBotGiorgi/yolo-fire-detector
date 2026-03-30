@@ -32,6 +32,8 @@ Per preparare il bundle cloud:
 python prepare_cloud_bundle.py
 ```
 
+Lo zip include automaticamente i file `.pt` presenti nella root del repository, oltre a codice, notebook, config e immagini base.
+
 Per l'inferenza:
 
 ```bash
@@ -87,6 +89,7 @@ Le configurazioni vivono in `configs/`:
 - `configs/local.default.yaml`: run locale standard
 - `configs/local.smoke.yaml`: test rapido locale
 - `configs/cloud.default.yaml`: base per Colab/Kaggle
+- altri preset cloud pronti in `configs/cloud.*.yaml`
 
 La config controlla:
 
@@ -118,13 +121,20 @@ La config controlla:
 - selezione casuale tra le immagini presenti in `dataset.fire_image_paths`
 - split train/val automatico
 
-Ogni dataset viene salvato in una cartella separata identificata da label e fingerprint, per esempio:
+Ogni dataset viene salvato in una cartella separata identificata da slug della label e fingerprint, per esempio:
 
 ```text
-artifacts/local/datasets/synthetic-fire-default__a1b2c3d4e5/
+artifacts/local/datasets/synthetic-fire-default-a1b2c3d4e5/
 ```
 
-Dentro la cartella c'e' anche `dataset_info.json`, che descrive:
+Convenzione di naming del dataset:
+
+- `<dataset-label-slug>-<fingerprint>`
+- la label viene normalizzata in minuscolo e i separatori diventano `-`
+- il fingerprint e' un hash corto dei parametri che definiscono davvero il dataset
+- se cambi immagini base, numero immagini, split, seed o override rilevanti, cambia anche il fingerprint
+
+Dentro la cartella c'e' anche `dataset_manifest.yaml`, che descrive:
 
 - parametri usati
 - fingerprint
@@ -136,33 +146,42 @@ Dentro la cartella c'e' anche `dataset_info.json`, che descrive:
 `train.py` contiene le utility di training usate dalla pipeline. La run YOLO viene salvata in una cartella con nome leggibile, per esempio:
 
 ```text
-artifacts/local/runs/local__baseline-local__yolov8n-local__yolov8n__synthetic-fire-default__a1b2c3d4e5/
+artifacts/local/runs/local-smoke-test-yolov8n-dataset-a1b2c3d4e5/
 ```
+
+Convenzione di naming della run:
+
+- `<environment>-<project-label>-<training-label-ridotta>-<dataset-label-ridotta>-<fingerprint>`
+- ogni segmento viene convertito in slug
+- i token ripetuti vengono eliminati automaticamente, quindi se `training.label` contiene gia' `yolov8n` non viene aggiunto una seconda volta da `training.model_size`
+- il fingerprint finale resta quello del dataset, cosi' e' immediato capire quale dataset sintetico ha prodotto quella run
 
 Dentro la run trovi:
 
-- checkpoint YOLO `weights/best.pt` e `weights/last.pt`
 - file grafici e metriche generate da YOLO
 - `resolved_config.yaml`
-- `dataset_info.json`
-- `pipeline_summary.json`
-- `final_export/`
+- `pipeline_summary.yaml`
+- `training_run.yaml`
 
-### 5. Model registry
+Durante il training la cartella contiene anche `weights/` con i checkpoint YOLO. Dopo una run completata con successo, i checkpoint vengono rimossi automaticamente e resta solo il modello finale registrato in `artifacts/local/exports/`.
+
+`training_run.yaml` e' il file canonico che salva il modello/peso effettivamente usato e i parametri finali del training.
+
+### 5. Export registry
 
 Alla fine della pipeline il modello finale viene registrato in:
 
 ```text
-artifacts/local/models/
+artifacts/local/exports/
 ```
 
 In particolare:
 
-- `models/<run_label>.pt`: modello finale esportato
-- `models/<run_label>.json`: metadati di dataset e run
-- `models/latest.json`: puntatore al modello piu' recente
+- `exports/<run_label>.pt`: modello finale esportato
+- `exports/<run_label>.yaml`: metadati di dataset e run
+- `exports/latest.yaml`: puntatore all'export piu' recente
 
-`detect.py`, se non riceve `--weights`, prova a leggere proprio questo registry.
+I metadata salvano path relativi alla root persistente, non path assoluti della macchina locale. `detect.py`, se non riceve `--weights`, prova a leggere proprio questo registry.
 
 ## Struttura del repository
 
@@ -178,6 +197,7 @@ I file piu' importanti sono:
 - `transformations.py`: trasformazioni visuali e augmentazioni
 - `utils.py`: utility di salvataggio e I/O
 - `settings.py`: default statici delle classi di configurazione
+- `TRAINING_PRESETS.md`: panoramica dei preset cloud per esperimenti
 
 ## Come usare il repo in locale
 
@@ -291,10 +311,10 @@ python detect.py --weights path/to/model.pt --source 0
 Nel contesto di questo progetto, gli artefatti sono tutti i file generati dalla pipeline e non scritti a mano nel repository. Per esempio:
 
 - dataset generati
-- manifest JSON del dataset
+- manifest YAML del dataset
 - checkpoint di training
 - export finali del modello
-- registry dei modelli
+- registry degli export
 - zip preparato per il cloud
 
 Per questo vengono ignorati da git in `.gitignore`.

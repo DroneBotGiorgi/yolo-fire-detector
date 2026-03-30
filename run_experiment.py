@@ -7,6 +7,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 import shutil
 from typing import Any
 
@@ -17,6 +18,24 @@ from settings import DatasetGenerationSettings, ImageTransformSettings, Training
 from train import train_model
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def slugify(value: str) -> str:
+    """Convert free-form labels into stable path-safe slugs."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "-", value.strip().lower())
+    cleaned = re.sub(r"-{2,}", "-", cleaned)
+    return cleaned.strip("-") or "item"
+
+
+def portable_path(path: Path, root: Path | None = None) -> str:
+    """Serialize a path relative to a chosen root when possible."""
+    resolved_path = path.resolve()
+    if root is not None:
+        try:
+            return resolved_path.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            pass
+    return resolved_path.as_posix()
 
 
 def collect_class_settings(cls: type, exclude: set[str] | None = None) -> dict[str, Any]:
@@ -113,23 +132,25 @@ def count_files(root: Path, pattern: str) -> int:
     return sum(1 for item in root.glob(pattern) if item.is_file())
 
 
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Write indented JSON with UTF-8 encoding."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-
-
 def write_yaml(path: Path, payload: dict[str, Any]) -> None:
-    """Write YAML metadata for reproducibility."""
+    """Write YAML metadata with UTF-8 encoding."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=False)
 
 
+def read_yaml(path: Path) -> dict[str, Any]:
+    """Read YAML metadata into a dictionary."""
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"Metadata YAML non valida: {path}")
+    return payload
+
+
 def dataset_manifest_path(dataset_root: Path) -> Path:
     """Return the dataset metadata path."""
-    return dataset_root / "dataset_info.json"
+    return dataset_root / "dataset_manifest.yaml"
 
 
 def dataset_ready(dataset_root: Path, expected_fingerprint: str, expected_images: int) -> bool:
@@ -139,9 +160,8 @@ def dataset_ready(dataset_root: Path, expected_fingerprint: str, expected_images
         return False
 
     try:
-        with open(manifest_path, "r", encoding="utf-8") as handle:
-            manifest = json.load(handle)
-    except json.JSONDecodeError:
+        manifest = read_yaml(manifest_path)
+    except (OSError, ValueError, yaml.YAMLError):
         return False
 
     if manifest.get("fingerprint") != expected_fingerprint:
@@ -159,7 +179,7 @@ def dataset_ready(dataset_root: Path, expected_fingerprint: str, expected_images
 def build_dataset_snapshot(config: dict[str, Any], fire_image_paths: list[Path]) -> dict[str, Any]:
     """Build the fingerprinted dataset snapshot."""
     dataset_cfg = config["dataset"]
-    serialized_paths = [str(path) for path in fire_image_paths]
+    serialized_paths = [portable_path(path, PROJECT_ROOT) for path in fire_image_paths]
     return {
         "label": dataset_cfg["label"],
         "fire_image_paths": serialized_paths,
@@ -197,15 +217,14 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
 
     snapshot = build_dataset_snapshot(config, fire_image_paths)
     fingerprint = stable_hash(snapshot)
-    dataset_folder_name = f"{dataset_cfg['label']}__{fingerprint}"
+    dataset_folder_name = f"{slugify(dataset_cfg['label'])}-{fingerprint}"
     dataset_root = datasets_root / dataset_folder_name
     manifest_path = dataset_manifest_path(dataset_root)
 
     reused = dataset_ready(dataset_root, fingerprint, dataset_cfg["num_images"]) and not dataset_cfg.get("force_regenerate", False)
 
     if reused:
-        with open(manifest_path, "r", encoding="utf-8") as handle:
-            manifest = json.load(handle)
+        manifest = read_yaml(manifest_path)
         print(f"♻️ Dataset riutilizzato: {dataset_root}")
         return {
             "root": dataset_root,
@@ -226,6 +245,12 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
         seed=dataset_cfg.get("seed"),
         clean=True,
     )
+    stats["dataset_root"] = portable_path(dataset_root, persistent_root)
+    stats["fire_image_paths"] = [portable_path(path, PROJECT_ROOT) for path in fire_image_paths]
+    stats["base_image_usage"] = {
+        portable_path(Path(path), PROJECT_ROOT): count
+        for path, count in stats.get("base_image_usage", {}).items()
+    }
 
     train_images = count_files(dataset_root, "images/train/*.jpg")
     val_images = count_files(dataset_root, "images/val/*.jpg")
@@ -234,7 +259,7 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
         "label": dataset_cfg["label"],
         "environment": project_cfg["environment"],
         "fingerprint": fingerprint,
-        "root": str(dataset_root),
+        "root": portable_path(dataset_root, persistent_root),
         "snapshot": snapshot,
         "stats": stats,
         "counts": {
@@ -243,7 +268,7 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
             "total_images": train_images + val_images,
         },
     }
-    write_json(manifest_path, manifest)
+    write_yaml(manifest_path, manifest)
     print(f"🧾 Manifest dataset scritto in: {manifest_path}")
     return {
         "root": dataset_root,
@@ -259,16 +284,27 @@ def build_run_label(config: dict[str, Any], dataset_fingerprint: str) -> str:
     project_cfg = config["project"]
     dataset_cfg = config["dataset"]
     training_cfg = config["training"]
-    return "__".join(
-        [
-            project_cfg["environment"],
-            project_cfg["label"],
-            training_cfg["label"],
-            f"yolov8{training_cfg['model_size']}",
-            dataset_cfg["label"],
-            dataset_fingerprint,
-        ]
-    )
+    training_slug = slugify(training_cfg["label"])
+    model_slug = slugify(f"yolov8{training_cfg['model_size']}")
+    raw_parts = [
+        slugify(project_cfg["environment"]),
+        slugify(project_cfg["label"]),
+        training_slug,
+        model_slug,
+        slugify(dataset_cfg["label"]),
+        dataset_fingerprint,
+    ]
+
+    parts: list[str] = []
+    seen_tokens: set[str] = set()
+    for part in raw_parts:
+        tokens = [token for token in part.split("-") if token]
+        unique_tokens = [token for token in tokens if token not in seen_tokens]
+        if unique_tokens:
+            parts.append("-".join(unique_tokens))
+            seen_tokens.update(unique_tokens)
+
+    return "-".join(parts)
 
 
 def resolve_resume_policy(run_dir: Path, resume_policy: str) -> bool:
@@ -281,52 +317,59 @@ def resolve_resume_policy(run_dir: Path, resume_policy: str) -> bool:
     return last_checkpoint.exists()
 
 
-def register_model_artifacts(
+def register_export_artifacts(
     persistent_root: Path,
     run_label: str,
-    export_dir: Path,
+    run_dir: Path,
     dataset_manifest: dict[str, Any],
     resolved_config: dict[str, Any],
 ) -> dict[str, str]:
-    """Copy final model and metadata into a persistent model registry."""
-    registry_dir = persistent_root / "models"
-    registry_dir.mkdir(parents=True, exist_ok=True)
+    """Copy final model and metadata into a persistent export registry."""
+    export_dir = persistent_root / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = export_dir / "best.pt"
-    registry_model_path = registry_dir / f"{run_label}.pt"
-    shutil.copy2(model_path, registry_model_path)
+    model_path = run_dir / "weights" / "best.pt"
+    export_model_path = export_dir / f"{run_label}.pt"
+    shutil.copy2(model_path, export_model_path)
 
     metadata = {
         "registered_at": datetime.now(timezone.utc).isoformat(),
         "run_label": run_label,
-        "model_path": str(registry_model_path),
-        "export_dir": str(export_dir),
+        "model_path": portable_path(export_model_path, persistent_root),
+        "run_dir": portable_path(run_dir, persistent_root),
+        "training_run_path": portable_path(run_dir / "training_run.yaml", persistent_root),
+        "resolved_config_path": portable_path(run_dir / "resolved_config.yaml", persistent_root),
         "dataset": {
             "fingerprint": dataset_manifest["fingerprint"],
             "label": dataset_manifest["label"],
             "root": dataset_manifest["root"],
-            "manifest_path": str(export_dir.parent / "dataset_info.json"),
+            "manifest_path": f"{dataset_manifest['root']}/dataset_manifest.yaml",
         },
         "config": resolved_config,
     }
-    registry_metadata_path = registry_dir / f"{run_label}.json"
-    write_json(registry_metadata_path, metadata)
+    export_metadata_path = export_dir / f"{run_label}.yaml"
+    write_yaml(export_metadata_path, metadata)
 
-    latest_pointer_path = registry_dir / "latest.json"
-    write_json(
+    latest_pointer_path = export_dir / "latest.yaml"
+    write_yaml(
         latest_pointer_path,
         {
             "run_label": run_label,
-            "model_path": str(registry_model_path),
-            "metadata_path": str(registry_metadata_path),
+            "model_path": portable_path(export_model_path, persistent_root),
+            "metadata_path": portable_path(export_metadata_path, persistent_root),
         },
     )
 
     return {
-        "model_path": str(registry_model_path),
-        "metadata_path": str(registry_metadata_path),
-        "latest_path": str(latest_pointer_path),
+        "model_path": portable_path(export_model_path, persistent_root),
+        "metadata_path": portable_path(export_metadata_path, persistent_root),
+        "latest_path": portable_path(latest_pointer_path, persistent_root),
     }
+
+
+def cleanup_completed_run(run_dir: Path) -> None:
+    """Remove heavy checkpoint artifacts after a successful completed run."""
+    shutil.rmtree(run_dir / "weights", ignore_errors=True)
 
 
 def run_pipeline(config: dict[str, Any], config_path: Path) -> dict[str, Any]:
@@ -345,33 +388,31 @@ def run_pipeline(config: dict[str, Any], config_path: Path) -> dict[str, Any]:
 
     run_label = build_run_label(config, dataset_info["fingerprint"])
     run_dir = runs_root / run_label
-    export_dir = run_dir / "final_export"
     resume_enabled = resolve_resume_policy(run_dir, training_cfg["resume"])
 
     resolved_config = {
-        "config_path": str(config_path),
+        "config_path": portable_path(config_path, PROJECT_ROOT),
         "project": config["project"],
         "dataset": config["dataset"],
         "training": config["training"],
         "dataset_settings_overrides": config.get("dataset_settings_overrides", {}),
         "image_transform_overrides": config.get("image_transform_overrides", {}),
         "training_overrides": config.get("training_overrides", {}),
-        "resolved_dataset_root": str(dataset_info["root"]),
+        "resolved_dataset_root": portable_path(dataset_info["root"], persistent_root),
         "run_label": run_label,
         "resume_enabled": resume_enabled,
     }
     write_yaml(run_dir / "resolved_config.yaml", resolved_config)
-    write_json(run_dir / "dataset_info.json", dataset_info["manifest"])
 
     extra_summary = {
         "run_label": run_label,
         "environment": project_cfg["environment"],
         "dataset_fingerprint": dataset_info["fingerprint"],
-        "dataset_manifest_path": str(dataset_info["manifest_path"]),
+        "dataset_manifest_path": portable_path(dataset_info["manifest_path"], persistent_root),
         "dataset_reused": dataset_info["reused"],
         "fire_image_paths": dataset_info["manifest"]["snapshot"]["fire_image_paths"],
         "base_image_usage": dataset_info["manifest"].get("stats", {}).get("base_image_usage", {}),
-        "resolved_config_path": str(run_dir / "resolved_config.yaml"),
+        "resolved_config_path": portable_path(run_dir / "resolved_config.yaml", persistent_root),
     }
 
     train_model(
@@ -385,36 +426,50 @@ def run_pipeline(config: dict[str, Any], config_path: Path) -> dict[str, Any]:
         project_name=str(runs_root),
         experiment_name=run_label,
         weights=training_cfg.get("weights"),
-        export_dir=str(export_dir),
         extra_summary=extra_summary,
     )
 
-    registry_paths = register_model_artifacts(
+    export_paths = register_export_artifacts(
         persistent_root=persistent_root,
         run_label=run_label,
-        export_dir=export_dir,
+        run_dir=run_dir,
         dataset_manifest=dataset_info["manifest"],
         resolved_config=resolved_config,
     )
 
+    cleanup_completed_run(run_dir)
+
     summary = {
-        "dataset_root": str(dataset_info["root"]),
-        "dataset_manifest_path": str(dataset_info["manifest_path"]),
-        "run_dir": str(run_dir),
-        "export_dir": str(export_dir),
+        "dataset_root": portable_path(dataset_info["root"], persistent_root),
+        "dataset_manifest_path": portable_path(dataset_info["manifest_path"], persistent_root),
+        "run_dir": portable_path(run_dir, persistent_root),
+        "training_run_path": portable_path(run_dir / "training_run.yaml", persistent_root),
         "run_label": run_label,
         "resume_enabled": resume_enabled,
-        "registry": registry_paths,
+        "exports": export_paths,
     }
-    write_json(run_dir / "pipeline_summary.json", summary)
+    write_yaml(run_dir / "pipeline_summary.yaml", summary)
 
     print("\n" + "=" * 60)
     print("Pipeline completata")
     print("=" * 60)
     print(f"Dataset: {summary['dataset_root']}")
     print(f"Run: {summary['run_dir']}")
-    print(f"Export: {summary['export_dir']}")
-    print(f"Registry model: {summary['registry']['model_path']}")
+    print(f"Training metadata: {summary['training_run_path']}")
+    print(f"Export model: {summary['exports']['model_path']}")
+
+    try:
+        import google.colab  # type: ignore
+
+        print("\n" + "=" * 60)
+        print("GOOGLE COLAB - COMANDI DI DOWNLOAD")
+        print("=" * 60)
+        print("from google.colab import files")
+        print(f"files.download('{summary['exports']['model_path']}')")
+        print(f"files.download('{summary['training_run_path']}')")
+        print("=" * 60)
+    except ImportError:
+        pass
 
     return summary
 

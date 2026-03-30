@@ -28,6 +28,7 @@ Questo e' esattamente quello che fa la pipeline attuale.
 - `cloud_train.ipynb`
 - `run_experiment.py`
 - `configs/cloud.default.yaml`
+- `TRAINING_PRESETS.md`
 
 ## Passo 1: prepara il bundle dal repository locale
 
@@ -44,6 +45,7 @@ dist/yolo-fire-detector-cloud.zip
 ```
 
 Quello zip contiene il codice necessario per il training cloud, incluso il notebook e i file di configurazione.
+Include anche automaticamente i file `.pt` presenti nella root del repository, per esempio `yolov8n.pt`, `yolov8s.pt` o `yolov8m.pt` se li hai scaricati localmente.
 
 ## Passo 2: apri Colab e abilita la GPU
 
@@ -85,7 +87,7 @@ repo/
 inputs/
 datasets/
 runs/
-models/
+exports/
 ```
 
 4. cerca `yolo-fire-detector-cloud.zip`
@@ -105,11 +107,11 @@ Se non salvi su Drive, Colab perde tutto quando la sessione finisce.
 Con la root persistente attuale invece conservi:
 
 - dataset generati
-- manifest JSON del dataset
+- manifest YAML del dataset
 - checkpoint YOLO
 - config risolte
 - export finali
-- registry dei modelli
+- registry degli export
 
 Questo e' il motivo per cui il notebook e' costruito intorno a una root fissa e non a una cartella temporanea in `/content`.
 
@@ -130,13 +132,13 @@ La pipeline legge i parametri della config e costruisce un fingerprint del datas
 Il dataset viene scritto in una cartella come questa:
 
 ```text
-datasets/<dataset_label>__<fingerprint>/
+datasets/<dataset-label>-<fingerprint>/
 ```
 
 E dentro trovi anche:
 
 ```text
-dataset_info.json
+dataset_manifest.yaml
 ```
 
 Se un dataset compatibile esiste gia', la pipeline non lo rigenera.
@@ -184,9 +186,12 @@ allora la pipeline riparte automaticamente da quel checkpoint.
 Il modo corretto non e' modificare a mano il codice Python del notebook. Il modo corretto e':
 
 1. partire da `configs/cloud.default.yaml`
-2. nel notebook scrivere una `cloud.runtime.yaml`
-3. cambiare li' i parametri di dataset o training
-4. lanciare la pipeline
+2. nel notebook scegliere il preset con `BASE_CONFIG_NAME`
+3. il notebook scrive `cloud.runtime.yaml` partendo da quel preset
+4. opzionalmente rifinire li' i parametri di dataset o training
+5. lanciare la pipeline
+
+I preset pronti sono documentati in `TRAINING_PRESETS.md` e includono configurazioni per recall, robustezza, piccoli incendi, hard negatives e modelli piu' capienti.
 
 Per scegliere una sola immagine:
 
@@ -235,25 +240,31 @@ Le cartelle principali sono:
 ### `datasets/`
 
 Contiene i dataset sintetici generati, uno per fingerprint.
+Ogni dataset include anche `dataset_manifest.yaml`, che salva i metadati del dataset in YAML con path relativi alla root persistente.
 
 ### `runs/`
 
 Contiene le run YOLO complete, quindi:
 
-- checkpoint
 - metriche
 - immagini di training/validation generate da YOLO
 - `resolved_config.yaml`
-- `pipeline_summary.json`
-- `final_export/`
+- `pipeline_summary.yaml`
+- `training_run.yaml`
 
-### `models/`
+Durante il training la run contiene anche i checkpoint in `weights/`. Dopo una run completata con successo, i checkpoint vengono rimossi automaticamente e il modello finale resta nel registry `exports/`.
 
-Contiene il registry persistente dei modelli finali:
+`training_run.yaml` e' il file canonico con il modello/peso effettivamente usato insieme agli altri parametri del training.
 
-- `models/<run_label>.pt`
-- `models/<run_label>.json`
-- `models/latest.json`
+### `exports/`
+
+Contiene il registry persistente degli export finali:
+
+- `exports/<run_label>.pt`
+- `exports/<run_label>.yaml`
+- `exports/latest.yaml`
+
+I metadata usano path relativi alla root persistente del notebook, quindi restano portabili tra macchine e mount point diversi.
 
 ## Flusso operativo consigliato su Colab
 
