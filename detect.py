@@ -282,20 +282,146 @@ class FireDetector:
         cv2.imwrite(str(filepath), frame)
         print(f"✓ Frame salvato: {filepath}")
         return str(filepath)
+
+    def _open_camera_capture(self, camera_id: int) -> cv2.VideoCapture:
+        """Open and preconfigure a camera capture."""
+        if os.name == "nt":
+            cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(camera_id)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        return cap
+
+    def _probe_camera_source(self, camera_id: int) -> dict:
+        """Probe a camera source and collect basic availability diagnostics."""
+        cap = self._open_camera_capture(camera_id)
+        info = {
+            "camera_id": camera_id,
+            "available": False,
+            "resolution": None,
+            "message": "Non disponibile",
+            "non_black": False,
+        }
+
+        if not cap.isOpened():
+            cap.release()
+            return info
+
+        frame = None
+        for _ in range(6):
+            ret, candidate = cap.read()
+            if ret and candidate is not None:
+                frame = candidate
+                break
+            time.sleep(0.15)
+
+        if frame is None:
+            cap.release()
+            info["message"] = "Nessun frame"
+            return info
+
+        frame = cv2.flip(frame, 1)
+        height, width = frame.shape[:2]
+        info["non_black"] = bool(frame.max() > 20 and frame.mean() > 5)
+        cap.release()
+
+        info["available"] = True
+        info["resolution"] = f"{width}x{height}"
+        info["message"] = "Frame valido" if info["non_black"] else "Frame molto scuro/nero"
+        return info
+
+    def select_camera_source(self, max_sources: int = 6) -> int:
+        """List available cameras in the terminal and prompt the user to choose one."""
+
+        def scan_sources() -> list[dict]:
+            sources: list[dict] = []
+            consecutive_missing = 0
+            found_any = False
+            for camera_id in range(max_sources):
+                source = self._probe_camera_source(camera_id)
+                sources.append(source)
+                if source["available"]:
+                    found_any = True
+                    consecutive_missing = 0
+                else:
+                    consecutive_missing += 1
+                    if found_any and consecutive_missing >= 2:
+                        break
+            return sources
+
+        sources = scan_sources()
+        available_sources = [source for source in sources if source["available"]]
+        if not available_sources:
+            raise RuntimeError("Nessuna camera disponibile trovata")
+
+        print("\n" + "=" * 60)
+        print("SELEZIONE CAMERA")
+        print("=" * 60)
+        print("Le camere con '*' hanno restituito un frame non nero.")
+        print()
+
+        for source in available_sources:
+            marker = "*" if source["non_black"] else " "
+            resolution = source["resolution"] or "?x?"
+            print(f"[{source['camera_id']}] {marker} Camera {source['camera_id']}  {resolution}  |  {source['message']}")
+
+        preferred_source = next(
+            (source for source in available_sources if source["non_black"]),
+            available_sources[0],
+        )
+
+        while True:
+            choice = input(
+                f"\nSeleziona camera ID [{preferred_source['camera_id']}] oppure 'r' per rescansionare, 'q' per annullare: "
+            ).strip().lower()
+
+            if not choice:
+                return int(preferred_source["camera_id"])
+
+            if choice == "q":
+                raise RuntimeError("Selezione camera annullata")
+
+            if choice == "r":
+                sources = scan_sources()
+                available_sources = [source for source in sources if source["available"]]
+                if not available_sources:
+                    raise RuntimeError("Nessuna camera disponibile trovata")
+                print()
+                for source in available_sources:
+                    marker = "*" if source["non_black"] else " "
+                    resolution = source["resolution"] or "?x?"
+                    print(f"[{source['camera_id']}] {marker} Camera {source['camera_id']}  {resolution}  |  {source['message']}")
+                preferred_source = next(
+                    (source for source in available_sources if source["non_black"]),
+                    available_sources[0],
+                )
+                continue
+
+            if choice.isdigit():
+                selected = int(choice)
+                if any(source["camera_id"] == selected and source["available"] for source in available_sources):
+                    return selected
+
+            print("Scelta non valida. Inserisci un ID disponibile, 'r' o 'q'.")
     
-    def run_webcam(self, camera_id: int = 0) -> None:
+    def run_webcam(self, camera_id: int | None = None) -> None:
         """
         Esegue la detection da webcam.
         
         Args:
-            camera_id: ID della webcam (default: 0)
+            camera_id: ID della webcam. Se omesso apre un selettore testuale.
         """
+        if camera_id is None:
+            camera_id = self.select_camera_source()
+
         print(f"\n{'='*60}")
         print(f"🎥 APERTURA WEBCAM {camera_id}")
         print(f"{'='*60}")
         
         # Step 1: Prova ad aprire la webcam
-        cap = cv2.VideoCapture(camera_id)
+        cap = self._open_camera_capture(camera_id)
         
         if not cap.isOpened():
             print(f"❌ Errore: impossibile aprire la webcam {camera_id}")
@@ -309,10 +435,6 @@ class FireDetector:
         # Step 2: Configura la webcam
         print(f"✓ Webcam {camera_id} aperta")
         print(f"⚙️ Configurazione webcam...")
-        
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        cap.set(cv2.CAP_PROP_FPS, 30)
         
         # Step 3: Attendi che la webcam si inizializzi
         print(f"⏳ Inizializzazione camera (5 tentativi)...")
@@ -704,7 +826,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python detect.py                              # Webcam (default)
+    python detect.py                              # Selettore camera testuale (default)
+    python detect.py --source webcam              # Selettore camera testuale
   python detect.py --source 0                   # Webcam con ID 0
   python detect.py --source rtmp://example.com/live/stream   # RTMP stream
   python detect.py --source video.mp4           # File video
@@ -717,8 +840,8 @@ Examples:
     parser.add_argument(
         "--source",
         type=str,
-        default="0",
-        help="Sorgente: numero=webcam, RTMP/RTSP URL=stream, path file=video, path cartella=immagini"
+        default="webcam",
+        help="Sorgente: webcam/camera=selettore testuale, numero=webcam diretta, RTMP/RTSP URL=stream, path file=video, path cartella=immagini"
     )
     parser.add_argument(
         "--weights",
@@ -751,9 +874,13 @@ Examples:
         
         # Determina la sorgente
         source = args.source
+
+        if source.lower() in {"webcam", "camera", "select"}:
+            detector.run_webcam(camera_id=None)
+        
         
         # Se è un numero, è la webcam
-        if source.isdigit():
+        elif source.isdigit():
             camera_id = int(source)
             detector.run_webcam(camera_id=camera_id)
         
