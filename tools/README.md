@@ -15,3 +15,8 @@ Utility non-core del progetto, tenute fuori dalla root per non confondere gli en
 - `tools/streaming/fake_rtmp_webcam.py`: pubblica una webcam locale come stream RTMP/HLS per testare `detect.py`
 - `tools/streaming/mediamtx.yml`: configurazione minima del server locale MediaMTX
 - `tools/streaming/README.md`: comandi rapidi per preview RTMP/HLS e test del detector
+
+## Model Registry
+
+- `tools/model_registry/drive_model_sync.py`: esporta/importa modelli su Google Drive, sia via cartella sincronizzata sia via OAuth API (con latest + checksum SHA256)
+- `tools/model_registry/oauth_credentials.example.json`: template del file unico locale per OAuth (`client_secrets` + `token`)

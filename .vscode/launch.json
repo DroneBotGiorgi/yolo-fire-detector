@@ -10,7 +10,7 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--config",
-        "${workspaceFolder}/configs/local.default.yaml"
+        "${input:localPipelineConfigPath}"
       ]
     },
     {
@@ -122,9 +122,59 @@
         "--output",
         "dist/yolo-fire-detector-cloud.zip"
       ]
+    },
+    {
+      "name": "Export Model To Drive Registry",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/model_registry/drive_model_sync.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "export",
+        "--auth-mode",
+        "oauth",
+        "--registry-name",
+        "${input:driveRegistryName}",
+        "--drive-parent-id",
+        "${input:googleDriveParentId}",
+        "--oauth-credentials-file",
+        "${input:googleOauthCredentialsFile}",
+        "--local-persistent-root",
+        "${input:localPersistentRoot}"
+      ]
+    },
+    {
+      "name": "Import Model From Drive Registry",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/model_registry/drive_model_sync.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "import",
+        "--auth-mode",
+        "oauth",
+        "--registry-name",
+        "${input:driveRegistryName}",
+        "--drive-parent-id",
+        "${input:googleDriveParentId}",
+        "--oauth-credentials-file",
+        "${input:googleOauthCredentialsFile}",
+        "--target-persistent-root",
+        "${input:localPersistentRoot}",
+        "--run-label",
+        "${input:driveImportRunLabel}"
+      ]
     }
   ],
   "inputs": [
+    {
+      "id": "localPipelineConfigPath",
+      "type": "promptString",
+      "description": "Path del file YAML per la pipeline locale completa",
+      "default": "${workspaceFolder}/configs/local.default.yaml"
+    },
     {
       "id": "generationConfigPath",
       "type": "promptString",
@@ -145,6 +195,42 @@
       "id": "detectImageFolder",
       "type": "promptString",
       "description": "Cartella di immagini da analizzare"
+    },
+    {
+      "id": "googleDriveRoot",
+      "type": "promptString",
+      "description": "Root locale Google Drive (solo filesystem mode, es. G:/My Drive)",
+      "default": "G:/My Drive"
+    },
+    {
+      "id": "googleDriveParentId",
+      "type": "promptString",
+      "description": "OAuth mode: folder ID parent su Google Drive (root = cartella principale)",
+      "default": "root"
+    },
+    {
+      "id": "googleOauthCredentialsFile",
+      "type": "promptString",
+      "description": "Path file locale credenziali OAuth (client_secrets + token)",
+      "default": "${workspaceFolder}/tools/model_registry/oauth_credentials.local.json"
+    },
+    {
+      "id": "driveRegistryName",
+      "type": "promptString",
+      "description": "Sottocartella registry modelli su Drive",
+      "default": "yolo-fire-detector-models"
+    },
+    {
+      "id": "localPersistentRoot",
+      "type": "promptString",
+      "description": "Root persistente locale per export/import",
+      "default": "${workspaceFolder}/artifacts/local"
+    },
+    {
+      "id": "driveImportRunLabel",
+      "type": "promptString",
+      "description": "Run label da importare (vuoto = latest)",
+      "default": ""
     }
   ]
 }

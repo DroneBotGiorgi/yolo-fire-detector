@@ -22,6 +22,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# OAuth / credentials (local only)
+tools/model_registry/oauth_credentials.local.json
+tools/model_registry/client_secret_*.json
+tools/model_registry/google-drive-token.json
+
 # Distribution / packaging
 .Python
 build/
