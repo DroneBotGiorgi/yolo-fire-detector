@@ -27,6 +27,9 @@ Tutti i file sono in `configs/` e vengono inclusi nello zip cloud automaticament
 - `configs/cloud.capacity.yaml`
   Focus su capacita' del modello. Usa YOLOv8m e piu' epoche. E' il preset piu' costoso ma anche quello con piu' margine qualitativo.
 
+- `configs/cloud.fast-debug.yaml`
+  Preset rapido per iterare su dataset e pipeline. Riduce costo di generazione e training per controlli veloci, non per misure finali di qualita'.
+
 ## Strategia consigliata
 
 Se il problema e' che il modello vede il fuoco ma con confidenza troppo bassa, l'ordine sensato e':

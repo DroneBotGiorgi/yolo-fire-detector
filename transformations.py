@@ -50,21 +50,19 @@ def background_gradient(size: int) -> np.ndarray:
 
     mode = random.choice(["horizontal", "vertical", "diagonal"])
 
-    bg = np.zeros((size, size, 3), dtype=np.uint8)
+    if mode == "horizontal":
+        t = np.linspace(0.0, 1.0, size, dtype=np.float32)[None, :]
+        t = np.repeat(t, size, axis=0)
+    elif mode == "vertical":
+        t = np.linspace(0.0, 1.0, size, dtype=np.float32)[:, None]
+        t = np.repeat(t, size, axis=1)
+    else:
+        coords = np.linspace(0.0, 1.0, size, dtype=np.float32)
+        xx, yy = np.meshgrid(coords, coords)
+        t = (xx + yy) * 0.5
 
-    for y in range(size):
-        for x in range(size):
-            if mode == "horizontal":
-                t = x / max(1, size - 1)
-            elif mode == "vertical":
-                t = y / max(1, size - 1)
-            else:
-                t = (x + y) / max(1, 2 * size - 2)
-
-            color = (1 - t) * c1 + t * c2
-            bg[y, x] = color.astype(np.uint8)
-
-    return bg
+    gradient = (1.0 - t[..., None]) * c1 + t[..., None] * c2
+    return gradient.astype(np.uint8)
 
 
 def background_blobs(size: int) -> np.ndarray:
@@ -195,19 +193,19 @@ def perspective_warp_keep_canvas(image: np.ndarray, shift: int) -> np.ndarray:
     """
     h, w = image.shape[:2]
 
-    pts1 = np.float32([
+    pts1 = np.array([
         [0, 0],
         [w - 1, 0],
         [0, h - 1],
         [w - 1, h - 1]
-    ])
+    ], dtype=np.float32)
 
-    pts2 = np.float32([
+    pts2 = np.array([
         [random.randint(0, shift), random.randint(0, shift)],
         [w - 1 - random.randint(0, shift), random.randint(0, shift)],
         [random.randint(0, shift), h - 1 - random.randint(0, shift)],
         [w - 1 - random.randint(0, shift), h - 1 - random.randint(0, shift)]
-    ])
+    ], dtype=np.float32)
 
     M = cv2.getPerspectiveTransform(pts1, pts2)
 
