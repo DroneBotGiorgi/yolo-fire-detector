@@ -413,124 +413,117 @@ class FireDetector:
         Args:
             camera_id: ID della webcam. Se omesso apre un selettore testuale.
         """
-        if camera_id is None:
-            camera_id = self.select_camera_source()
+        prompt_for_next_camera = camera_id is None
 
-        print(f"\n{'='*60}")
-        print(f"🎥 APERTURA WEBCAM {camera_id}")
-        print(f"{'='*60}")
-        
-        # Step 1: Prova ad aprire la webcam
-        cap = self._open_camera_capture(camera_id)
-        
-        if not cap.isOpened():
-            print(f"❌ Errore: impossibile aprire la webcam {camera_id}")
-            print(f"\n🔧 Troubleshooting:")
-            print(f"  - Verifica che la webcam sia collegata")
-            print(f"  - Prova con camera_id diverso: python run-webcam.py 1")
-            print(f"  - Su Linux potrebbe essere /dev/video0 invece di 0")
-            print(f"  - Controlla permessi della webcam")
-            raise RuntimeError(f"Impossibile aprire webcam {camera_id}")
-        
-        # Step 2: Configura la webcam
-        print(f"✓ Webcam {camera_id} aperta")
-        print(f"⚙️ Configurazione webcam...")
-        
-        # Step 3: Attendi che la webcam si inizializzi
-        print(f"⏳ Inizializzazione camera (5 tentativi)...")
-        frame = None
-        for i in range(5):
-            ret, test_frame = cap.read()
-            if ret and test_frame is not None:
-                print(f"  Tentativo {i+1}: ✓ Frame ricevuto")
-                frame = test_frame
-                break
-            else:
+        while True:
+            selected_camera_id = camera_id if camera_id is not None else self.select_camera_source()
+
+            print(f"\n{'='*60}")
+            print(f"🎥 APERTURA WEBCAM {selected_camera_id}")
+            print(f"{'='*60}")
+
+            cap = self._open_camera_capture(selected_camera_id)
+
+            if not cap.isOpened():
+                print(f"❌ Errore: impossibile aprire la webcam {selected_camera_id}")
+                print(f"\n🔧 Troubleshooting:")
+                print(f"  - Verifica che la webcam sia collegata")
+                print(f"  - Prova con un altro ID: python detect.py --source 1")
+                print(f"  - Su Linux potrebbe essere /dev/video0 invece di 0")
+                print(f"  - Controlla permessi della webcam")
+                raise RuntimeError(f"Impossibile aprire webcam {selected_camera_id}")
+
+            print(f"✓ Webcam {selected_camera_id} aperta")
+            print(f"⚙️ Configurazione webcam...")
+
+            print(f"⏳ Inizializzazione camera (5 tentativi)...")
+            frame = None
+            for i in range(5):
+                ret, test_frame = cap.read()
+                if ret and test_frame is not None:
+                    print(f"  Tentativo {i+1}: ✓ Frame ricevuto")
+                    frame = test_frame
+                    break
                 print(f"  Tentativo {i+1}: ✗ Nessun frame")
-            time.sleep(0.3)
-        
-        if frame is None:
-            print(f"❌ Webcam non ha risposto dopo 5 tentativi")
-            print(f"\n🔧 Troubleshooting:")
-            print(f"  - La webcam potrebbe essere in uso da un'altra app")
-            print(f"  - Prova a riavviare la webcam")
-            print(f"  - Prova a riavviare il sistema")
-            cap.release()
-            raise RuntimeError(f"Webcam {camera_id} non risponde")
-        
-        # Step 4: Debug info
-        print(f"✓ Webcam inizializzata correttamente")
-        print(f"\n📊 Proprietà webcam:")
-        print(f"  Risoluzione: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
-        print(f"  FPS: {cap.get(cv2.CAP_PROP_FPS):.2f}")
-        print(f"  Frame shape: {frame.shape}")
-        print(f"  Frame dtype: {frame.dtype}")
-        print(f"  Min pixel value: {frame.min()}, Max: {frame.max()}")
-        
-        if frame.max() < 10:
-            print(f"\n⚠️ ATTENZIONE: Frame sembra essere nero/vuoto!")
-            print(f"   Pixel values are all very low (max={frame.max()})")
-            print(f"   Prova a:")
-            print(f"   - Attendi 3-5 secondi per la stabilizzazione camera")
-            print(f"   - Verifica che la webcam abbia illuminazione adeguata")
-            print(f"   - Prova con una telecamera diversa")
-        
-        print(f"\n{'='*60}")
-        print(f"DETECTION DA WEBCAM AVVIATA")
-        print(f"{'='*60}")
-        print(f"Premi 'q' o 'ESC' per uscire")
-        print(f"Premi 's' per salvare il frame")
-        print(f"{'='*60}\n")
-        
-        fps_time = time.time()
-        fps_counter = 0
-        fps = 0
-        frame_count = 0
-        
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret or frame is None:
-                    print("❌ Errore: impossibile leggere il frame")
-                    break
-                
-                frame_count += 1
-                
-                # Diagnostica ogni 30 frame
-                if frame_count % 30 == 0:
-                    if frame.max() < 10:
+                time.sleep(0.3)
+
+            if frame is None:
+                print(f"❌ Webcam non ha risposto dopo 5 tentativi")
+                print(f"\n🔧 Troubleshooting:")
+                print(f"  - La webcam potrebbe essere in uso da un'altra app")
+                print(f"  - Prova a riavviare la webcam")
+                print(f"  - Prova a riavviare il sistema")
+                cap.release()
+                raise RuntimeError(f"Webcam {selected_camera_id} non risponde")
+
+            print(f"✓ Webcam inizializzata correttamente")
+            print(f"\n📊 Proprietà webcam:")
+            print(f"  Risoluzione: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
+            print(f"  FPS: {cap.get(cv2.CAP_PROP_FPS):.2f}")
+            print(f"  Frame shape: {frame.shape}")
+            print(f"  Frame dtype: {frame.dtype}")
+            print(f"  Min pixel value: {frame.min()}, Max: {frame.max()}")
+
+            if frame.max() < 10:
+                print(f"\n⚠️ ATTENZIONE: Frame sembra essere nero/vuoto!")
+                print(f"   Pixel values are all very low (max={frame.max()})")
+                print(f"   Prova a:")
+                print(f"   - Attendi 3-5 secondi per la stabilizzazione camera")
+                print(f"   - Verifica che la webcam abbia illuminazione adeguata")
+                print(f"   - Prova con una telecamera diversa")
+
+            print(f"\n{'='*60}")
+            print(f"DETECTION DA WEBCAM AVVIATA")
+            print(f"{'='*60}")
+            print(f"Premi 'q' o 'ESC' per uscire")
+            print(f"Premi 's' per salvare il frame")
+            if prompt_for_next_camera:
+                print(f"Alla chiusura tornerai al selettore camera")
+            print(f"{'='*60}\n")
+
+            fps_time = time.time()
+            fps_counter = 0
+            fps = 0
+            frame_count = 0
+
+            try:
+                while True:
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        print("❌ Errore: impossibile leggere il frame")
+                        break
+
+                    frame_count += 1
+
+                    if frame_count % 30 == 0 and frame.max() < 10:
                         print(f"⚠️ Frame {frame_count}: Ancora nero (max pixel={frame.max()})")
-                
-                # Flip orizzontale per webcam (effetto specchio)
-                frame = cv2.flip(frame, 1)
-                
-                # Esegui detection
-                annotated_frame, detections = self.detect_frame(frame)
-                
-                # Aggiungi info
-                annotated_frame = self.draw_info(annotated_frame, detections, fps)
-                
-                # Mostra il frame
-                cv2.imshow("Fire Detection - Webcam", annotated_frame)
-                
-                # Calcola FPS
-                fps_counter += 1
-                if time.time() - fps_time > 1:
-                    fps = fps_counter / (time.time() - fps_time)
-                    fps_counter = 0
-                    fps_time = time.time()
-                
-                # Gestisci input
-                key = cv2.waitKey(1) & 0xFF
-                if key in [ord('q'), 27]:  # 'q' o ESC
-                    break
-                elif key == ord('s'):
-                    self.save_frame(annotated_frame, detections)
-        
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
-            print(f"\n✓ Detection da webcam terminata ({frame_count} frame elaborati)")
+
+                    frame = cv2.flip(frame, 1)
+                    annotated_frame, detections = self.detect_frame(frame)
+                    annotated_frame = self.draw_info(annotated_frame, detections, fps)
+                    cv2.imshow("Fire Detection - Webcam", annotated_frame)
+
+                    fps_counter += 1
+                    if time.time() - fps_time > 1:
+                        fps = fps_counter / (time.time() - fps_time)
+                        fps_counter = 0
+                        fps_time = time.time()
+
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in [ord('q'), 27]:
+                        break
+                    if key == ord('s'):
+                        self.save_frame(annotated_frame, detections)
+
+            finally:
+                cap.release()
+                cv2.destroyAllWindows()
+                print(f"\n✓ Detection da webcam terminata ({frame_count} frame elaborati)")
+
+            if not prompt_for_next_camera:
+                break
+
+            camera_id = None
     
     def run_rtmp(self, rtmp_url: str) -> None:
         """
