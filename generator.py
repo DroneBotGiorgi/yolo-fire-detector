@@ -47,6 +47,14 @@ def generate_negative_sample(image_size: int) -> tuple:
     return bg, ""
 
 
+def safe_destroy_windows() -> None:
+    """Close demo windows when HighGUI support is available."""
+    try:
+        cv2.destroyAllWindows()
+    except cv2.error:
+        pass
+
+
 def generate_positive_sample(fire_rgba, image_size: int) -> tuple:
     """
     Genera un'immagine positiva:
@@ -210,7 +218,8 @@ def generate_dataset(
         if (i + 1) % 100 == 0:
             print(f"Generate {i + 1}/{num_images} immagini")
 
-    cv2.destroyAllWindows()
+    if demo_mode:
+        safe_destroy_windows()
     print("Dataset generato correttamente.")
     return {
         "dataset_root": dataset_root,
