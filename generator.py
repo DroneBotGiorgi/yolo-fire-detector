@@ -1,17 +1,10 @@
-"""
-YOLO Fire Detector Dataset Generator
+"""Dataset generator for the YOLO Fire Detector project."""
 
-Main entry point for synthetic dataset generation.
-
-Architecture:
-- settings.py: Configuration classes (ImageTransformSettings, DatasetGenerationSettings)
-- transformations.py: Image augmentation and transformation functions
-- utils.py: Utility functions (I/O, YOLO labels, folder management)
-- generator.py: Main orchestration logic
-"""
+import random
+import shutil
 
 import cv2
-import random
+import numpy as np
 
 from settings import ImageTransformSettings, DatasetGenerationSettings
 from transformations import (
@@ -111,60 +104,98 @@ def generate_positive_sample(fire_rgba, image_size: int) -> tuple:
     return composed, label, bbox
 
 
-def main() -> None:
-    """
-    Orchestrazione principale della generazione del dataset.
-    """
-    dataset_root = DatasetGenerationSettings.DATASET_ROOT
-    image_size = DatasetGenerationSettings.IMAGE_SIZE
+def generate_dataset(
+    dataset_root: str = DatasetGenerationSettings.DATASET_ROOT,
+    fire_image_path: str = DatasetGenerationSettings.FIRE_IMAGE_PATH,
+    num_images: int = DatasetGenerationSettings.NUM_IMAGES,
+    image_size: int = DatasetGenerationSettings.IMAGE_SIZE,
+    negative_ratio: float = DatasetGenerationSettings.NEGATIVE_RATIO,
+    train_split: float = DatasetGenerationSettings.TRAIN_SPLIT,
+    demo_mode: bool = DatasetGenerationSettings.DEMO_MODE,
+    demo_wait_ms: int = DatasetGenerationSettings.DEMO_WAIT_MS,
+    seed: int | None = None,
+    clean: bool = False,
+) -> dict:
+    """Genera un dataset sintetico con parametri espliciti."""
+
+    if not 0.0 <= negative_ratio <= 1.0:
+        raise ValueError("negative_ratio deve essere compreso tra 0.0 e 1.0")
+    if not 0.0 < train_split < 1.0:
+        raise ValueError("train_split deve essere compreso tra 0.0 e 1.0")
+    if num_images <= 0:
+        raise ValueError("num_images deve essere maggiore di zero")
+    if image_size <= 0:
+        raise ValueError("image_size deve essere maggiore di zero")
+
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    if clean:
+        shutil.rmtree(dataset_root, ignore_errors=True)
 
     make_output_folders(dataset_root)
 
-    fire = load_fire_image(DatasetGenerationSettings.FIRE_IMAGE_PATH)
+    fire = load_fire_image(fire_image_path)
 
     print("Avvio generazione dataset...")
-    print(f"Immagine fuoco: {DatasetGenerationSettings.FIRE_IMAGE_PATH}")
+    print(f"Immagine fuoco: {fire_image_path}")
     print(f"Cartella dataset: {dataset_root}")
-    print(f"Numero immagini: {DatasetGenerationSettings.NUM_IMAGES}")
+    print(f"Numero immagini: {num_images}")
     print(f"Dimensione output: {image_size}x{image_size}")
-    print(f"Negative ratio: {DatasetGenerationSettings.NEGATIVE_RATIO}")
+    print(f"Negative ratio: {negative_ratio}")
+    print(f"Train split: {train_split}")
+    if seed is not None:
+        print(f"Seed: {seed}")
 
-    for i in range(DatasetGenerationSettings.NUM_IMAGES):
+    num_negative = 0
+    num_positive = 0
 
-        is_negative = random.random() < DatasetGenerationSettings.NEGATIVE_RATIO
+    for i in range(num_images):
+
+        is_negative = random.random() < negative_ratio
 
         if is_negative:
+            num_negative += 1
             image, label = generate_negative_sample(image_size)
             save_sample(
                 image=image,
                 label_text=label,
                 dataset_root=dataset_root,
                 index=i,
-                train_split=DatasetGenerationSettings.TRAIN_SPLIT
+                train_split=train_split
             )
 
-            if DatasetGenerationSettings.DEMO_MODE and i % 10 == 0:
-                show_demo(image, bbox=None, wait_ms=DatasetGenerationSettings.DEMO_WAIT_MS)
+            if demo_mode and i % 10 == 0:
+                show_demo(image, bbox=None, wait_ms=demo_wait_ms)
 
         else:
+            num_positive += 1
             image, label, bbox = generate_positive_sample(fire, image_size)
             save_sample(
                 image=image,
                 label_text=label,
                 dataset_root=dataset_root,
                 index=i,
-                train_split=DatasetGenerationSettings.TRAIN_SPLIT
+                train_split=train_split
             )
 
-            if DatasetGenerationSettings.DEMO_MODE and i % 10 == 0:
-                show_demo(image, bbox=bbox, wait_ms=DatasetGenerationSettings.DEMO_WAIT_MS)
+            if demo_mode and i % 10 == 0:
+                show_demo(image, bbox=bbox, wait_ms=demo_wait_ms)
 
         if (i + 1) % 100 == 0:
-            print(f"Generate {i + 1}/{DatasetGenerationSettings.NUM_IMAGES} immagini")
+            print(f"Generate {i + 1}/{num_images} immagini")
 
     cv2.destroyAllWindows()
     print("Dataset generato correttamente.")
-
-
-if __name__ == "__main__":
-    main()
+    return {
+        "dataset_root": dataset_root,
+        "num_images": num_images,
+        "num_positive": num_positive,
+        "num_negative": num_negative,
+        "image_size": image_size,
+        "negative_ratio": negative_ratio,
+        "train_split": train_split,
+        "seed": seed,
+        "fire_image_path": fire_image_path,
+    }

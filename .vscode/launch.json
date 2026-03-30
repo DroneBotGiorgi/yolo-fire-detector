@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Local Pipeline (YAML)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_experiment.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--config",
+        "${workspaceFolder}/configs/local.default.yaml"
+      ]
+    },
+    {
+      "name": "Create Cloud Bundle",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/prepare_cloud_bundle.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--output",
+        "dist/yolo-fire-detector-cloud.zip"
+      ]
+    }
+  ]
+}

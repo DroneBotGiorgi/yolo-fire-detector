@@ -1,11 +1,21 @@
-# I file di dataset non devono essere tracciati da git.
-dataset/*
-
-# Cartelle di training, risultati YOLO, test di detection
+# Dati e artefatti locali
+dataset/
+artifacts/
 fire_detector_runs/
 runs/
 wandb/
 detections/
+dist/
+
+# Notebook e file temporanei
+.ipynb_checkpoints/
+configs/*.runtime.yaml
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
 
 # Python bytecode
 __pycache__/
@@ -16,7 +26,6 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/

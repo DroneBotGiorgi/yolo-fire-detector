@@ -33,11 +33,38 @@ from ultralytics import YOLO
 import cv2
 import numpy as np
 import argparse
+import importlib
+import json
 import os
 from pathlib import Path
 from datetime import datetime
 import threading
 import time
+
+
+def resolve_default_model_path() -> str:
+    """Resolve the preferred trained model path from the persistent registry."""
+    candidate_files = [
+        Path("artifacts/local/models/latest.json"),
+        Path("artifacts/cloud/models/latest.json"),
+        Path("runs/detect/fire_detector_runs/train/weights/best.pt"),
+    ]
+
+    for candidate in candidate_files:
+        if candidate.suffix == ".json" and candidate.exists():
+            try:
+                with open(candidate, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                model_path = payload.get("model_path")
+                if model_path and os.path.exists(model_path):
+                    return model_path
+            except (OSError, json.JSONDecodeError):
+                continue
+
+        if candidate.suffix != ".json" and candidate.exists():
+            return str(candidate)
+
+    return "artifacts/local/models/latest.json"
 
 
 class FireDetector:
@@ -49,7 +76,7 @@ class FireDetector:
     
     def __init__(
         self,
-        model_path: str = "runs/detect/fire_detector_runs/train/weights/best.pt",
+        model_path: str | None = None,
         conf_threshold: float = 0.5,
         device: str = "cpu",
     ):
@@ -61,14 +88,16 @@ class FireDetector:
             conf_threshold: Soglia di confidenza per le detections
             device: Device per inference ('cpu' o numero GPU come stringa)
         """
-        if not os.path.exists(model_path):
+        resolved_model_path = model_path or resolve_default_model_path()
+
+        if not os.path.exists(resolved_model_path):
             raise FileNotFoundError(
-                f"Modello non trovato: {model_path}\n"
-                f"Esegui prima: python train.py"
+                f"Modello non trovato: {resolved_model_path}\n"
+                "Esegui prima: python run_experiment.py --config configs/local.default.yaml"
             )
         
-        print(f"Caricamento modello: {model_path}")
-        self.model = YOLO(model_path)
+        print(f"Caricamento modello: {resolved_model_path}")
+        self.model = YOLO(resolved_model_path)
         self.conf_threshold = conf_threshold
         self.device = device
         
@@ -97,7 +126,7 @@ class FireDetector:
     def _start_key_listener():
         """Avvia il listener dei tasti usando pynput (se disponibile)."""
         try:
-            from pynput import keyboard
+            keyboard = importlib.import_module("pynput.keyboard")
             listener = keyboard.Listener(on_press=FireDetector._on_key_press)
             listener.start()
             FireDetector._key_listener = listener
@@ -659,7 +688,7 @@ Examples:
   python detect.py --source rtmp://example.com/live/stream   # RTMP stream
   python detect.py --source video.mp4           # File video
   python detect.py --source dataset/images/val/ # Test su immagini validation
-  python detect.py --weights best.pt            # Modello personalizzato
+    python detect.py --weights best.pt            # Modello personalizzato
   python detect.py --conf 0.6                   # Soglia confidenza 0.6
         """
     )
@@ -673,8 +702,8 @@ Examples:
     parser.add_argument(
         "--weights",
         type=str,
-        default="runs/detect/fire_detector_runs/train/weights/best.pt",
-        help="Percorso del modello YOLOv8 (creato da train.py)"
+        default=None,
+        help="Percorso del modello YOLOv8. Se omesso usa il modello registrato piu' recente."
     )
     parser.add_argument(
         "--conf",

@@ -1,56 +1,73 @@
-"""
-Training script for YOLO Fire Detector
+"""Training utilities for the YOLO Fire Detector project."""
 
-Trains a YOLOv8 model to detect fire using the generated synthetic dataset.
-
-Usage:
-    python train.py [options]
-    
-Configuration:
-    All training parameters are centralized in TrainingSettings class.
-    Command line arguments can override the default settings.
-    
-    Model sizes: 'n' (nano), 's' (small), 'm' (medium), 'l' (large)
-    Default model: YOLOv8n
-    Default epochs: 100
-    Default image size: 640
-    Default batch size: 16
-"""
+import json
+import os
+import shutil
 
 from ultralytics import YOLO
-import os
+
 from settings import DatasetGenerationSettings, TrainingSettings
 
 
-def create_dataset_yaml() -> str:
-    """
-    Crea il file data.yaml necessario per il training YOLO.
-    
-    Returns:
-        str: percorso del file data.yaml
-    """
-    dataset_root = DatasetGenerationSettings.DATASET_ROOT
+def create_dataset_yaml(dataset_root: str = DatasetGenerationSettings.DATASET_ROOT) -> str:
+    """Crea il file data.yaml richiesto da YOLO."""
     yaml_path = os.path.join(dataset_root, "data.yaml")
-    
-    # Conteggia immagini per validazione
-    images_train = os.path.join(dataset_root, "images", "train")
-    images_val = os.path.join(dataset_root, "images", "val")
-    
-    # Crea il contenuto del file YAML
     yaml_content = f"""path: {os.path.abspath(dataset_root)}
 train: images/train
 val: images/val
 
-nc: 1  # number of classes
-names: ['fire']  # class names
+nc: 1
+names: ['fire']
 """
-    
-    # Scrivi il file
-    with open(yaml_path, 'w') as f:
-        f.write(yaml_content)
-    
+
+    with open(yaml_path, "w", encoding="utf-8") as handle:
+        handle.write(yaml_content)
+
     print(f"✓ Dataset YAML creato: {yaml_path}")
     return yaml_path
+
+
+def validate_dataset(dataset_root: str) -> None:
+    """Verifica che il dataset esista e contenga immagini di training."""
+    if not os.path.exists(dataset_root):
+        raise FileNotFoundError(
+            f"Dataset non trovato in {dataset_root}\n"
+            "Esegui prima: python run_experiment.py --config configs/local.default.yaml"
+        )
+
+    images_train = os.path.join(dataset_root, "images", "train")
+    if not os.path.exists(images_train) or not os.listdir(images_train):
+        raise FileNotFoundError(
+            f"Nessuna immagine di training trovata in {images_train}\n"
+            "Esegui prima: python run_experiment.py --config configs/local.default.yaml"
+        )
+
+
+def export_training_artifacts(
+    run_dir: str,
+    export_dir: str | None,
+    training_summary: dict,
+) -> str:
+    """Copia il modello finale e serializza i parametri usati."""
+    resolved_export_dir = export_dir or os.path.join(run_dir, "final_export")
+    os.makedirs(resolved_export_dir, exist_ok=True)
+
+    best_weights_path = os.path.join(run_dir, "weights", "best.pt")
+    final_model_path = os.path.join(resolved_export_dir, "best.pt")
+    shutil.copy(best_weights_path, final_model_path)
+
+    txt_path = os.path.join(resolved_export_dir, "training_settings.txt")
+    with open(txt_path, "w", encoding="utf-8") as handle:
+        handle.write("# Training settings utilizzate\n")
+        for key, value in training_summary.items():
+            handle.write(f"{key} = {value}\n")
+
+    json_path = os.path.join(resolved_export_dir, "training_run.json")
+    with open(json_path, "w", encoding="utf-8") as handle:
+        json.dump(training_summary, handle, indent=2)
+
+    print(f"📦 Export finale disponibile in: {resolved_export_dir}")
+    return resolved_export_dir
 
 
 def train_model(
@@ -60,317 +77,118 @@ def train_model(
     image_size: int = TrainingSettings.IMAGE_SIZE,
     device: str = TrainingSettings.DEVICE,
     resume: bool = False,
-) -> None:
-    """
-    Addestra il modello YOLO sulla detection del fuoco.
+    dataset_root: str = DatasetGenerationSettings.DATASET_ROOT,
+    project_name: str = TrainingSettings.PROJECT_NAME,
+    experiment_name: str = TrainingSettings.EXPERIMENT_NAME,
+    weights: str | None = None,
+    export_dir: str | None = None,
+    extra_summary: dict | None = None,
+) -> str:
+    """Addestra il modello YOLO e restituisce la cartella di export finale."""
+    validate_dataset(dataset_root)
+    yaml_path = create_dataset_yaml(dataset_root)
 
-    Args:
-        model_size: Dimensione del modello ('n', 's', 'm', 'l') - default da TrainingSettings
-        epochs: Numero di epoche di training - default da TrainingSettings
-        batch_size: Batch size per step di training - default da TrainingSettings
-        image_size: Dimensione delle immagini di input - default da TrainingSettings
-        device: Device per training ('cpu' o numero GPU) - default da TrainingSettings
-        resume: Se True, riprende da checkpoint esistente
-    """
+    run_dir = os.path.join(project_name, experiment_name)
+    checkpoint_path = os.path.join(run_dir, "weights", "last.pt")
+    base_weights = weights or f"yolov8{model_size}.pt"
 
-    # Verifica che il dataset esista
-    dataset_root = DatasetGenerationSettings.DATASET_ROOT
-    if not os.path.exists(dataset_root):
-        raise FileNotFoundError(
-            f"Dataset non trovato in {dataset_root}\n"
-            f"Esegui prima: python generator.py"
+    print("\n" + "=" * 60)
+    print("Preparazione training...")
+    print("=" * 60)
+    print(f"Dataset: {dataset_root}")
+    print(f"Weights iniziali: {base_weights}")
+    print(f"Output run: {run_dir}")
+
+    if resume and os.path.exists(checkpoint_path):
+        print(f"🔁 Resume da checkpoint: {checkpoint_path}")
+        model = YOLO(checkpoint_path)
+        model.train(resume=True)
+    else:
+        if resume:
+            print("⚠️ Resume richiesto ma checkpoint non trovato, avvio da zero.")
+
+        model = YOLO(base_weights)
+        model.train(
+            data=yaml_path,
+            epochs=epochs,
+            imgsz=image_size,
+            batch=batch_size,
+            patience=TrainingSettings.PATIENCE,
+            device=device,
+            project=project_name,
+            name=experiment_name,
+            exist_ok=TrainingSettings.OVERWRITE_EXISTING,
+            verbose=TrainingSettings.VERBOSE,
+            lr0=TrainingSettings.LEARNING_RATE_INIT,
+            lrf=TrainingSettings.LEARNING_RATE_FINAL,
+            momentum=TrainingSettings.MOMENTUM,
+            weight_decay=TrainingSettings.WEIGHT_DECAY,
+            degrees=TrainingSettings.ROTATION_DEGREES,
+            translate=TrainingSettings.TRANSLATE,
+            scale=TrainingSettings.SCALE,
+            flipud=TrainingSettings.FLIP_VERTICAL,
+            fliplr=TrainingSettings.FLIP_HORIZONTAL,
+            mosaic=TrainingSettings.MOSAIC,
+            amp=TrainingSettings.MIXED_PRECISION,
         )
 
-    images_train = os.path.join(dataset_root, "images", "train")
-    if not os.path.exists(images_train) or len(os.listdir(images_train)) == 0:
-        raise FileNotFoundError(
-            f"Nessuna immagine di training trovata in {images_train}\n"
-            f"Esegui prima: python generator.py"
-        )
+    print("\n" + "=" * 60)
+    print("Training completato")
+    print("=" * 60)
 
-    # Crea il file data.yaml
-    yaml_path = create_dataset_yaml()
+    summary = {
+        "dataset_root": os.path.abspath(dataset_root),
+        "project_name": project_name,
+        "experiment_name": experiment_name,
+        "model_size": model_size,
+        "weights": base_weights,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "image_size": image_size,
+        "device": device,
+        "resume": resume,
+    }
+    if extra_summary:
+        summary.update(extra_summary)
+    for attr in dir(TrainingSettings):
+        if attr.isupper():
+            summary[f"TrainingSettings.{attr}"] = getattr(TrainingSettings, attr)
 
-    # Carica il modello
-    print("\n" + "="*60)
-    print(f"Caricamento modello YOLOv8{model_size}...")
-    print("="*60)
-    model = YOLO(f"yolov8{model_size}.pt")
+    final_export_dir = export_training_artifacts(run_dir, export_dir, summary)
 
-    # Training
-    print("\n" + "="*60)
-    print("Inizio training...")
-    print("="*60)
-
-    # Controlla se esiste un ultimo checkpoint per resume
-    resume_flag = False
-    ckpt_path = os.path.join(
-        TrainingSettings.PROJECT_NAME,
-        TrainingSettings.EXPERIMENT_NAME,
-        "weights",
-        "last.pt",
-    )
-    if resume and os.path.exists(ckpt_path):
-        resume_flag = True
-        print(f"🔁 Checkpoint trovato ({ckpt_path}), il training continuerà da qui")
-    elif resume and not os.path.exists(ckpt_path):
-        print("⚠️ Resume richiesto ma nessun checkpoint troviato, si parte da zero.")
-
-    results = model.train(
-        data=yaml_path,
-        epochs=epochs,
-        imgsz=image_size,
-        batch=batch_size,
-        patience=TrainingSettings.PATIENCE,
-        device=device,
-        project=TrainingSettings.PROJECT_NAME,
-        name=TrainingSettings.EXPERIMENT_NAME,
-        exist_ok=TrainingSettings.OVERWRITE_EXISTING,
-        verbose=TrainingSettings.VERBOSE,
-        resume=resume_flag,
-        # Hyperparameters
-        lr0=TrainingSettings.LEARNING_RATE_INIT,
-        lrf=TrainingSettings.LEARNING_RATE_FINAL,
-        momentum=TrainingSettings.MOMENTUM,
-        weight_decay=TrainingSettings.WEIGHT_DECAY,
-        # Augmentation
-        degrees=TrainingSettings.ROTATION_DEGREES,
-        translate=TrainingSettings.TRANSLATE,
-        scale=TrainingSettings.SCALE,
-        flipud=TrainingSettings.FLIP_VERTICAL,
-        fliplr=TrainingSettings.FLIP_HORIZONTAL,
-        mosaic=TrainingSettings.MOSAIC,
-        # Mixed Precision
-        amp=TrainingSettings.MIXED_PRECISION,
-    )
-
-    print("\n" + "="*60)
-    print("Training completato!")
-    print("="*60)
-    print(f"Modello salvato in: runs/detect/fire_detector_runs/train/weights/best.pt")
-    print(f"Risultati disponibili in: runs/detect/fire_detector_runs/train/")
-
-    # --- export finale ------------------------------------------------
-    final_dir = os.path.join(TrainingSettings.PROJECT_NAME, TrainingSettings.EXPERIMENT_NAME, "final_export")
-    os.makedirs(final_dir, exist_ok=True)
-    final_model_path = os.path.join(final_dir, "best.pt")
-    print(f"\n🔧 Copio il modello finale in: {final_model_path}")
-    # copia file pesi
-    import shutil
-    shutil.copy(
-        os.path.join(TrainingSettings.PROJECT_NAME, TrainingSettings.EXPERIMENT_NAME, "weights", "best.pt"),
-        final_model_path,
-    )
-    # serializza le impostazioni usate in un file di testo
-    cfg_path = os.path.join(final_dir, "training_settings.txt")
-    with open(cfg_path, "w") as cfgf:
-        cfgf.write("# Training settings utilizzate\n")
-        for attr in dir(TrainingSettings):
-            if attr.isupper():
-                cfgf.write(f"{attr} = {getattr(TrainingSettings, attr)}\n")
-    print(f"⚙️ Impostazioni di training salvate in: {cfg_path}")
-    print("📁 Cartella finale pronta per essere copiata su un'altra macchina")
-
-    # Suggerimenti per Colab
     try:
-        import google.colab
-        print("\n" + "="*60)
-        print("GOOGLE COLAB - ISTRUZIONI PER SCARICARE")
-        print("="*60)
+        import google.colab  # type: ignore
+
+        print("\n" + "=" * 60)
+        print("GOOGLE COLAB - COMANDI DI DOWNLOAD")
+        print("=" * 60)
         print("from google.colab import files")
-        print(f"files.download('{final_model_path}')")
-        print(f"files.download('{cfg_path}')")
-        print("="*60)
+        print(f"files.download('{final_export_dir}/best.pt')")
+        print(f"files.download('{final_export_dir}/training_run.json')")
+        print("=" * 60)
     except ImportError:
         pass
-    
-    # Verifica che il dataset esista
-    dataset_root = DatasetGenerationSettings.DATASET_ROOT
-    if not os.path.exists(dataset_root):
-        raise FileNotFoundError(
-            f"Dataset non trovato in {dataset_root}\n"
-            f"Esegui prima: python generator.py"
-        )
-    
-    images_train = os.path.join(dataset_root, "images", "train")
-    if not os.path.exists(images_train) or len(os.listdir(images_train)) == 0:
-        raise FileNotFoundError(
-            f"Nessuna immagine di training trovata in {images_train}\n"
-            f"Esegui prima: python generator.py"
-        )
-    
-    # Crea il file data.yaml
-    yaml_path = create_dataset_yaml()
-    
-    # Carica il modello
-    print("\n" + "="*60)
-    print(f"Caricamento modello YOLOv8{model_size}...")
-    print("="*60)
-    model = YOLO(f"yolov8{model_size}.pt")
-    
-    # Training
-    print("\n" + "="*60)
-    print("Inizio training...")
-    print("="*60)
-    
-    # Controlla se esiste un ultimo checkpoint per resume
-    resume_flag = False
-    ckpt_path = os.path.join(
-        TrainingSettings.PROJECT_NAME,
-        TrainingSettings.EXPERIMENT_NAME,
-        "weights",
-        "last.pt",
-    )
-    if resume and os.path.exists(ckpt_path):
-        resume_flag = True
-        print(f"🔁 Checkpoint trovato ({ckpt_path}), il training continuerà da qui")
-    elif resume and not os.path.exists(ckpt_path):
-        print("⚠️ Resume richiesto ma nessun checkpoint troviato, si parte da zero.")
 
-    results = model.train(
-        data=yaml_path,
-        epochs=epochs,
-        imgsz=image_size,
-        batch=batch_size,
-        patience=TrainingSettings.PATIENCE,
-        device=device,
-        project=TrainingSettings.PROJECT_NAME,
-        name=TrainingSettings.EXPERIMENT_NAME,
-        exist_ok=TrainingSettings.OVERWRITE_EXISTING,
-        verbose=TrainingSettings.VERBOSE,
-        resume=resume_flag,
-        # Hyperparameters
-        lr0=TrainingSettings.LEARNING_RATE_INIT,
-        lrf=TrainingSettings.LEARNING_RATE_FINAL,
-        momentum=TrainingSettings.MOMENTUM,
-        weight_decay=TrainingSettings.WEIGHT_DECAY,
-        # Augmentation
-        degrees=TrainingSettings.ROTATION_DEGREES,
-        translate=TrainingSettings.TRANSLATE,
-        scale=TrainingSettings.SCALE,
-        flipud=TrainingSettings.FLIP_VERTICAL,
-        fliplr=TrainingSettings.FLIP_HORIZONTAL,
-        mosaic=TrainingSettings.MOSAIC,
-        # Mixed Precision
-        amp=TrainingSettings.MIXED_PRECISION,
-    )
-    
-    print("\n" + "="*60)
-    print("Training completato!")
-    print("="*60)
-    print(f"Modello salvato in: runs/detect/fire_detector_runs/train/weights/best.pt")
-    print(f"Risultati disponibili in: runs/detect/fire_detector_runs/train/")
-
-    # --- export finale ------------------------------------------------
-    final_dir = os.path.join(TrainingSettings.PROJECT_NAME, TrainingSettings.EXPERIMENT_NAME, "final_export")
-    os.makedirs(final_dir, exist_ok=True)
-    final_model_path = os.path.join(final_dir, "best.pt")
-    print(f"\n🔧 Copio il modello finale in: {final_model_path}")
-    # copia file pesi
-    import shutil
-    shutil.copy(
-        os.path.join(TrainingSettings.PROJECT_NAME, TrainingSettings.EXPERIMENT_NAME, "weights", "best.pt"),
-        final_model_path,
-    )
-    # serializza le impostazioni usate in un file di testo
-    cfg_path = os.path.join(final_dir, "training_settings.txt")
-    with open(cfg_path, "w") as cfgf:
-        cfgf.write("# Training settings utilizzate\n")
-        for attr in dir(TrainingSettings):
-            if attr.isupper():
-                cfgf.write(f"{attr} = {getattr(TrainingSettings, attr)}\n")
-    print(f"⚙️ Impostazioni di training salvate in: {cfg_path}")
-    print("📁 Cartella finale pronta per essere copiata su un'altra macchina")
+    return final_export_dir
 
 
-def validate_model(model_path: str = "runs/detect/fire_detector_runs/train/weights/best.pt") -> None:
-    """
-    Valida il modello addestrato.
-    
-    Args:
-        model_path: Percorso del modello da validare
-    """
+def validate_model(
+    model_path: str = "fire_detector_runs/train/weights/best.pt",
+    dataset_root: str = DatasetGenerationSettings.DATASET_ROOT,
+) -> None:
+    """Valida un modello gia' addestrato sul dataset corrente."""
     if not os.path.exists(model_path):
-        print(f"Modello non trovato: {model_path}")
-        return
-    
-    print("\n" + "="*60)
+        raise FileNotFoundError(f"Modello non trovato: {model_path}")
+
+    validate_dataset(dataset_root)
+    yaml_path = create_dataset_yaml(dataset_root)
+
+    print("\n" + "=" * 60)
     print("Validazione del modello...")
-    print("="*60)
-    
+    print("=" * 60)
+
     model = YOLO(model_path)
-    
-    # Crea data.yaml se non esiste
-    if not os.path.exists(os.path.join(DatasetGenerationSettings.DATASET_ROOT, "data.yaml")):
-        yaml_path = create_dataset_yaml()
-    else:
-        yaml_path = os.path.join(DatasetGenerationSettings.DATASET_ROOT, "data.yaml")
-    
     metrics = model.val(data=yaml_path)
-    
-    print("\n" + "="*60)
-    print("Metriche di validazione:")
-    print("="*60)
+
     print(f"mAP50: {metrics.box.map50:.4f}")
     print(f"mAP50-95: {metrics.box.map:.4f}")
-
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Training YOLO Fire Detector")
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=TrainingSettings.MODEL_SIZE,
-        choices=["n", "s", "m", "l"],
-        help=f"Dimensione del modello YOLOv8 (default: {TrainingSettings.MODEL_SIZE})"
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=TrainingSettings.EPOCHS,
-        help=f"Numero di epoche (default: {TrainingSettings.EPOCHS})"
-    )
-    parser.add_argument(
-        "--batch",
-        type=int,
-        default=TrainingSettings.BATCH_SIZE,
-        help=f"Batch size (default: {TrainingSettings.BATCH_SIZE})"
-    )
-    parser.add_argument(
-        "--imgsz",
-        type=int,
-        default=TrainingSettings.IMAGE_SIZE,
-        help=f"Image size (default: {TrainingSettings.IMAGE_SIZE})"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default=TrainingSettings.DEVICE,
-        help=f"Device per training: 'cpu' o numero GPU (default: {TrainingSettings.DEVICE})"
-    )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Se fornito, riprende il training dall'ultimo checkpoint (last.pt)"
-    )
-    parser.add_argument(
-        "--val-only",
-        action="store_true",
-        help="Solo validazione, non fare training"
-    )
-    
-    args = parser.parse_args()
-    
-    if args.val_only:
-        validate_model()
-    else:
-        train_model(
-            model_size=args.model,
-            epochs=args.epochs,
-            batch_size=args.batch,
-            image_size=args.imgsz,
-            device=args.device,
-            resume=args.resume,
-        )
