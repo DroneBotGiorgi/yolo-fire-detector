@@ -15,7 +15,7 @@ import yaml
 
 from generator import generate_dataset
 from settings import DatasetGenerationSettings, ImageTransformSettings, TrainingSettings
-from train import train_model
+from train import create_dataset_yaml, train_model
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -196,6 +196,39 @@ def build_dataset_snapshot(config: dict[str, Any], fire_image_paths: list[Path])
     }
 
 
+def build_dataset_manifest(
+    *,
+    created_at: str,
+    status: str,
+    config: dict[str, Any],
+    persistent_root: Path,
+    dataset_root: Path,
+    fingerprint: str,
+    snapshot: dict[str, Any],
+    stats: dict[str, Any],
+    counts: dict[str, int],
+    yolo_dataset_path: Path,
+) -> dict[str, Any]:
+    """Compose dataset manifest payloads for in-progress or completed generations."""
+    project_cfg = config["project"]
+    dataset_cfg = config["dataset"]
+    manifest: dict[str, Any] = {
+        "created_at": created_at,
+        "status": status,
+        "label": dataset_cfg["label"],
+        "environment": project_cfg["environment"],
+        "fingerprint": fingerprint,
+        "root": portable_path(dataset_root, persistent_root),
+        "yolo_dataset_path": portable_path(yolo_dataset_path, persistent_root),
+        "snapshot": snapshot,
+        "stats": stats,
+        "counts": counts,
+    }
+    if status == "completed":
+        manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
+    return manifest
+
+
 def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any]:
     """Generate or reuse a dataset folder keyed by configuration fingerprint."""
     project_cfg = config["project"]
@@ -234,6 +267,40 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
             "reused": True,
         }
 
+    dataset_root.mkdir(parents=True, exist_ok=True)
+
+    created_at = datetime.now(timezone.utc).isoformat()
+    yolo_dataset_path = Path(create_dataset_yaml(str(dataset_root)))
+    initial_manifest = build_dataset_manifest(
+        created_at=created_at,
+        status="generating",
+        config=config,
+        persistent_root=persistent_root,
+        dataset_root=dataset_root,
+        fingerprint=fingerprint,
+        snapshot=snapshot,
+        stats={
+            "dataset_root": portable_path(dataset_root, persistent_root),
+            "num_images_target": dataset_cfg["num_images"],
+            "image_size": dataset_cfg["image_size"],
+            "negative_ratio": dataset_cfg["negative_ratio"],
+            "train_split": dataset_cfg["train_split"],
+            "seed": dataset_cfg.get("seed"),
+            "fire_image_paths": [portable_path(path, PROJECT_ROOT) for path in fire_image_paths],
+            "base_image_usage": {
+                portable_path(path, PROJECT_ROOT): 0 for path in fire_image_paths
+            },
+        },
+        counts={
+            "train_images": 0,
+            "val_images": 0,
+            "total_images": 0,
+        },
+        yolo_dataset_path=yolo_dataset_path,
+    )
+    write_yaml(manifest_path, initial_manifest)
+    print(f"🧾 Manifest dataset iniziale scritto in: {manifest_path}")
+
     stats = generate_dataset(
         dataset_root=str(dataset_root),
         fire_image_paths=[str(path) for path in fire_image_paths],
@@ -254,20 +321,22 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
 
     train_images = count_files(dataset_root, "images/train/*.jpg")
     val_images = count_files(dataset_root, "images/val/*.jpg")
-    manifest = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "label": dataset_cfg["label"],
-        "environment": project_cfg["environment"],
-        "fingerprint": fingerprint,
-        "root": portable_path(dataset_root, persistent_root),
-        "snapshot": snapshot,
-        "stats": stats,
-        "counts": {
+    manifest = build_dataset_manifest(
+        created_at=created_at,
+        status="completed",
+        config=config,
+        persistent_root=persistent_root,
+        dataset_root=dataset_root,
+        fingerprint=fingerprint,
+        snapshot=snapshot,
+        stats=stats,
+        counts={
             "train_images": train_images,
             "val_images": val_images,
             "total_images": train_images + val_images,
         },
-    }
+        yolo_dataset_path=yolo_dataset_path,
+    )
     write_yaml(manifest_path, manifest)
     print(f"🧾 Manifest dataset scritto in: {manifest_path}")
     return {

@@ -319,6 +319,6 @@ Usa [CLOUD_TRAINING.md](CLOUD_TRAINING.md).
 
 - `run_experiment.py`: pipeline generation + training
 - `detect.py`: inferenza da webcam, stream, video o immagini
-- `prepare_cloud_bundle.py`: zip per Colab
+- `tools/cloud/prepare_cloud_bundle.py`: zip per Colab
 - `cloud_train.ipynb`: notebook cloud persistente
 - `TRAINING_PRESETS.md`: panoramica preset cloud

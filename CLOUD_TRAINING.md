@@ -7,7 +7,7 @@ Guida operativa breve per usare `cloud_train.ipynb` con gli output attuali del p
 Da VS Code locale:
 
 ```bash
-python prepare_cloud_bundle.py
+python tools/cloud/prepare_cloud_bundle.py
 ```
 
 Output atteso:
@@ -216,7 +216,7 @@ training:
 
 ## Checklist finale
 
-1. `python prepare_cloud_bundle.py`
+1. `python tools/cloud/prepare_cloud_bundle.py`
 2. carichi `dist/yolo-fire-detector-cloud.zip`
 3. apri `cloud_train.ipynb`
 4. scegli `USE_READY_CONFIG_AS_IS = True` se vuoi lanciare una config pronta senza modifiche manuali

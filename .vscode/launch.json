@@ -26,6 +26,18 @@
       ]
     },
     {
+      "name": "Start Fake RTMP From Webcam 2",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/streaming/fake_rtmp_webcam.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--camera",
+        "2"
+      ]
+    },
+    {
       "name": "Detect Validation Images (Latest Export)",
       "type": "debugpy",
       "request": "launch",
@@ -64,6 +76,18 @@
       ]
     },
     {
+      "name": "Detect Fake RTMP Webcam 2",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/detect.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--source",
+        "rtmp://127.0.0.1:1935/webcam2"
+      ]
+    },
+    {
       "name": "Detect Image Folder (Latest Export)",
       "type": "debugpy",
       "request": "launch",
@@ -79,7 +103,7 @@
       "name": "Create Cloud Bundle",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/prepare_cloud_bundle.py",
+      "program": "${workspaceFolder}/tools/cloud/prepare_cloud_bundle.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "args": [
