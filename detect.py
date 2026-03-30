@@ -119,8 +119,11 @@ class FireDetector:
         
         print(f"Caricamento modello: {resolved_model_path}")
         self.model = YOLO(resolved_model_path)
+        self.model_name = Path(resolved_model_path).name
         self.conf_threshold = conf_threshold
         self.device = device
+        self._highgui_available = True
+        self._highgui_warning_printed = False
         
         # Crea cartella per i salvataggi
         self.save_dir = Path("detections")
@@ -129,6 +132,46 @@ class FireDetector:
         print(f"✓ Modello caricato con successo")
         print(f"  Soglia di confidenza: {conf_threshold}")
         print(f"  Device: {'GPU' if device != 'cpu' else 'CPU'}")
+
+    def _disable_highgui(self, reason: str) -> None:
+        """Disable OpenCV GUI features after a runtime error."""
+        self._highgui_available = False
+        if not self._highgui_warning_printed:
+            print("\n⚠️ OpenCV GUI non disponibile in questo ambiente.")
+            print(f"   Dettaglio: {reason}")
+            print("   Continuo in modalita' headless (nessuna finestra).")
+            print("   Premi Ctrl+C nel terminale per interrompere.")
+            self._highgui_warning_printed = True
+
+    def _imshow_safe(self, window_name: str, frame: np.ndarray) -> bool:
+        """Show a frame when HighGUI is available, otherwise switch to headless mode."""
+        if not self._highgui_available:
+            return False
+        try:
+            cv2.imshow(window_name, frame)
+            return True
+        except cv2.error as ex:
+            self._disable_highgui(str(ex))
+            return False
+
+    def _wait_key_safe(self, timeout_ms: int = 1) -> int:
+        """Read keyboard input through OpenCV only when HighGUI is available."""
+        if not self._highgui_available:
+            return -1
+        try:
+            return cv2.waitKey(timeout_ms)
+        except cv2.error as ex:
+            self._disable_highgui(str(ex))
+            return -1
+
+    def _destroy_windows_safe(self) -> None:
+        """Close OpenCV windows safely in GUI or headless environments."""
+        if not self._highgui_available:
+            return
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            pass
     
     @staticmethod
     def _on_key_press(key):
@@ -168,7 +211,10 @@ class FireDetector:
             return key
         
         # Altrimenti usa OpenCV
-        key = cv2.waitKey(timeout_ms if timeout_ms > 0 else 0)
+        try:
+            key = cv2.waitKey(timeout_ms if timeout_ms > 0 else 0)
+        except cv2.error:
+            key = -1
         return key
     
     def detect_frame(self, frame: np.ndarray) -> tuple:
@@ -261,6 +307,33 @@ class FireDetector:
                     (0, 0, 255),
                     1
                 )
+
+        # Modello attivo (in piccolo, in basso a destra)
+        model_text = f"model: {self.model_name}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.45
+        thickness = 1
+        (text_w, text_h), baseline = cv2.getTextSize(model_text, font, font_scale, thickness)
+        x = max(10, frame.shape[1] - text_w - 10)
+        y = max(text_h + 10, frame.shape[0] - 10)
+
+        cv2.rectangle(
+            frame,
+            (x - 4, y - text_h - 4),
+            (x + text_w + 4, y + baseline + 2),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.putText(
+            frame,
+            model_text,
+            (x, y),
+            font,
+            font_scale,
+            (220, 220, 220),
+            thickness,
+            cv2.LINE_AA,
+        )
         
         return frame
     
@@ -501,7 +574,7 @@ class FireDetector:
                     frame = cv2.flip(frame, 1)
                     annotated_frame, detections = self.detect_frame(frame)
                     annotated_frame = self.draw_info(annotated_frame, detections, fps)
-                    cv2.imshow("Fire Detection - Webcam", annotated_frame)
+                    self._imshow_safe("Fire Detection - Webcam", annotated_frame)
 
                     fps_counter += 1
                     if time.time() - fps_time > 1:
@@ -509,7 +582,7 @@ class FireDetector:
                         fps_counter = 0
                         fps_time = time.time()
 
-                    key = cv2.waitKey(1) & 0xFF
+                    key = self._wait_key_safe(1) & 0xFF
                     if key in [ord('q'), 27]:
                         break
                     if key == ord('s'):
@@ -517,7 +590,7 @@ class FireDetector:
 
             finally:
                 cap.release()
-                cv2.destroyAllWindows()
+                self._destroy_windows_safe()
                 print(f"\n✓ Detection da webcam terminata ({frame_count} frame elaborati)")
 
             if not prompt_for_next_camera:
@@ -578,7 +651,7 @@ class FireDetector:
                 annotated_frame = self.draw_info(annotated_frame, detections, fps)
                 
                 # Mostra il frame
-                cv2.imshow("Fire Detection - RTMP Stream", annotated_frame)
+                self._imshow_safe("Fire Detection - RTMP Stream", annotated_frame)
                 
                 # Calcola FPS
                 fps_counter += 1
@@ -588,7 +661,7 @@ class FireDetector:
                     fps_time = time.time()
                 
                 # Gestisci input
-                key = cv2.waitKey(1) & 0xFF
+                key = self._wait_key_safe(1) & 0xFF
                 if key in [ord('q'), 27]:  # 'q' o ESC
                     break
                 elif key == ord('s'):
@@ -598,7 +671,7 @@ class FireDetector:
             print("\n\nInterrotto dall'utente")
         finally:
             cap.release()
-            cv2.destroyAllWindows()
+            self._destroy_windows_safe()
             print("\n✓ Detection da RTMP terminata")
     
     def run_video_file(self, video_path: str) -> None:
@@ -663,7 +736,7 @@ class FireDetector:
                 )
                 
                 # Mostra il frame
-                cv2.imshow("Fire Detection - Video File", annotated_frame)
+                self._imshow_safe("Fire Detection - Video File", annotated_frame)
                 
                 # Calcola FPS
                 fps_counter += 1
@@ -673,7 +746,7 @@ class FireDetector:
                     fps_time = time.time()
                 
                 # Gestisci input
-                key = cv2.waitKey(1) & 0xFF
+                key = self._wait_key_safe(1) & 0xFF
                 if key in [ord('q'), 27]:  # 'q' o ESC
                     break
                 elif key == ord('s'):
@@ -681,7 +754,7 @@ class FireDetector:
         
         finally:
             cap.release()
-            cv2.destroyAllWindows()
+            self._destroy_windows_safe()
             print(f"\n✓ Detection completata: {frame_num} frame processati")
 
 
@@ -708,6 +781,9 @@ class FireDetector:
             return
         
         image_paths.sort()  # Ordina alfabeticamente
+
+        if not self._highgui_available:
+            raise RuntimeError("OpenCV GUI non disponibile: test_on_images richiede finestre interattive")
         
         print("\n" + "="*60)
         print("TEST SU IMMAGINI STATICHE")
@@ -767,7 +843,8 @@ class FireDetector:
             )
             
             # Mostra immagine
-            cv2.imshow("Fire Detection - Test Images", annotated_img)
+            if not self._imshow_safe("Fire Detection - Test Images", annotated_img):
+                raise RuntimeError("OpenCV GUI non disponibile: impossibile mostrare immagini interattive")
             
             # Gestisci input in modo robusto
             navigate = True
@@ -804,7 +881,7 @@ class FireDetector:
             if key == 27 or key_char == 'q':
                 break
         
-        cv2.destroyAllWindows()
+        self._destroy_windows_safe()
         
         # Ferma il listener dei tasti
         if self._key_listener is not None:
@@ -897,14 +974,17 @@ Examples:
             print("  - URL RTMP/RTSP: Stream video")
             print("  - Path cartella: Immagini statiche")
             print("  - Path file: Video locale")
-            exit(1)
+            return
     
     except FileNotFoundError as e:
         print(f"\n❌ Errore: {e}")
-        exit(1)
+        return
     except RuntimeError as e:
+        if str(e) == "Selezione camera annullata":
+            print("\n✓ Selezione camera annullata, uscita.")
+            return
         print(f"\n❌ Errore: {e}")
-        exit(1)
+        return
     except KeyboardInterrupt:
         print("\n\n✓ Interrotto dall'utente")
 
