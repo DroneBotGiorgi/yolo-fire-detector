@@ -7,7 +7,21 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
+
+
+def read_image_rgb(input_path: Path) -> np.ndarray:
+    """Read an image from disk and return RGB uint8 pixels."""
+    bgr = cv2.imread(str(input_path), cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise FileNotFoundError(f"Unable to read image: {input_path}")
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
+def save_image_rgba(output_path: Path, rgba: np.ndarray) -> None:
+    """Save an RGBA image as PNG using OpenCV."""
+    bgra = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA)
+    if not cv2.imwrite(str(output_path), bgra):
+        raise OSError(f"Unable to write image: {output_path}")
 
 
 def sample_border_key_color(rgb: np.ndarray) -> np.ndarray:
@@ -31,7 +45,7 @@ def remove_with_chroma_key(
     high_threshold: float = 110.0,
 ) -> None:
     """Remove a near-solid green-screen style background and suppress green spill."""
-    rgb = np.array(Image.open(input_path).convert("RGB"), dtype=np.uint8)
+    rgb = read_image_rgb(input_path)
     key_color = sample_border_key_color(rgb)
 
     rgb_float = rgb.astype(np.float32)
@@ -67,7 +81,7 @@ def remove_with_chroma_key(
     foreground[alpha < 0.08] = 0.0
 
     rgba = np.dstack((np.clip(foreground, 0, 255).astype(np.uint8), (alpha * 255.0).astype(np.uint8)))
-    Image.fromarray(rgba, mode="RGBA").save(output_path, format="PNG")
+    save_image_rgba(output_path, rgba)
 
 
 def remove_with_grabcut(input_path: Path, output_path: Path) -> None:
@@ -112,12 +126,18 @@ def remove_with_rembg(input_path: Path, output_path: Path, model: str = "isnet-g
         output_path.write_bytes(result)
         return
 
-    if isinstance(result, Image.Image):
-        result.save(output_path, format="PNG")
+    if isinstance(result, np.ndarray):
+        if result.ndim != 3 or result.shape[2] not in (3, 4):
+            raise TypeError(f"Unsupported rembg ndarray shape: {result.shape!r}")
+        if result.shape[2] == 3:
+            if not cv2.imwrite(str(output_path), cv2.cvtColor(result, cv2.COLOR_RGB2BGR)):
+                raise OSError(f"Unable to write image: {output_path}")
+            return
+        save_image_rgba(output_path, result)
         return
 
-    if isinstance(result, np.ndarray):
-        Image.fromarray(result).save(output_path, format="PNG")
+    if hasattr(result, "save"):
+        result.save(output_path, format="PNG")
         return
 
     raise TypeError(f"Unsupported rembg output type: {type(result)!r}")
