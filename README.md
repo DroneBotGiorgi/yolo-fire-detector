@@ -299,7 +299,7 @@ Le configurazioni stanno in `configs/`.
 
 - `configs/local.smoke.yaml`: test end-to-end rapido
 - `configs/local.default.yaml`: baseline locale semplice
-- `configs/local.smoke.yaml`: utile per controlli di installazione o debug
+- `configs/local.piazzola-light.yaml`: variante locale dedicata allo scenario piazzola/light
 
 ### Cloud
 
