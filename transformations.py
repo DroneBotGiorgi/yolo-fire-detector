@@ -10,8 +10,50 @@ Contains all functions for:
 import cv2
 import numpy as np
 import random
+from pathlib import Path
 
 from settings import ImageTransformSettings
+
+
+REAL_BG_PATTERNS = ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp")
+
+
+def _iter_real_background_paths() -> list[Path]:
+    roots = getattr(ImageTransformSettings, "REAL_BACKGROUND_DIRS", [])
+    if not isinstance(roots, list) or not roots:
+        return []
+
+    paths: list[Path] = []
+    for root in roots:
+        base = Path(str(root)).expanduser()
+        if not base.exists():
+            continue
+        for pattern in REAL_BG_PATTERNS:
+            paths.extend(base.rglob(pattern))
+
+    return [path for path in paths if path.is_file()]
+
+
+def _sample_real_background(size: int) -> np.ndarray | None:
+    candidates = _iter_real_background_paths()
+    if not candidates:
+        return None
+
+    selected = random.choice(candidates)
+    image = cv2.imread(str(selected), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+
+    h, w = image.shape[:2]
+    if h < 2 or w < 2:
+        return None
+
+    # Crop quadrato casuale per mantenere varieta' di inquadrature.
+    side = min(h, w)
+    y = random.randint(0, h - side)
+    x = random.randint(0, w - side)
+    crop = image[y:y + side, x:x + side]
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
 
 
 # ============================================================
@@ -147,6 +189,13 @@ def generate_random_background(size: int) -> np.ndarray:
     """
     Seleziona casualmente uno dei tipi di sfondo sintetico.
     """
+    use_real = bool(getattr(ImageTransformSettings, "USE_REAL_BACKGROUNDS", False))
+    real_prob = float(getattr(ImageTransformSettings, "REAL_BACKGROUND_PROB", 0.65))
+    if use_real and random.random() < max(0.0, min(1.0, real_prob)):
+        sampled = _sample_real_background(size)
+        if sampled is not None:
+            return sampled
+
     generators = [
         background_flat_color,
         background_noise,

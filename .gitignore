@@ -33,6 +33,9 @@ tools/model_registry/oauth_credentials.local.json
 tools/model_registry/client_secret_*.json
 tools/model_registry/google-drive-token.json
 
+# Local environment secrets (do not commit)
+.env.local
+
 # Distribution / packaging
 .Python
 build/

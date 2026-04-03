@@ -47,6 +47,18 @@
       ]
     },
     {
+      "name": "Dataset Viewer",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/dataset/dataset_viewer.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--dataset",
+        "${input:datasetViewerDataset}"
+      ]
+    },
+    {
         "name": "Detect Webcam (Latest Model)",
       "type": "debugpy",
       "request": "launch",
@@ -245,6 +257,12 @@
       "id": "driveExportRunLabelOptionalAll",
       "type": "promptString",
       "description": "Selettore export (vuoto = latest, all = tutti i .pt nella cartella, all-r = ricorsivo; nome/path = match esatto, altrimenti prefix startswith)",
+      "default": ""
+    },
+    {
+      "id": "datasetViewerDataset",
+      "type": "promptString",
+      "description": "Dataset da visualizzare: percorso assoluto, relativo, nome esatto in artifacts/local/datasets/ oppure prefisso",
       "default": ""
     },
     {

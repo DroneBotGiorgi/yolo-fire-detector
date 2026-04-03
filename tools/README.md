@@ -65,6 +65,57 @@ E' utile quando vuoi controllare se:
 - la distribuzione visiva del dataset e' plausibile
 - gli esempi negativi e positivi sembrano corretti
 
+### `tools/dataset/dataset_report.py`
+
+Genera un report QA automatico su dataset YOLO (split, bbox stats, ratio positivi/negativi, brightness).
+
+Comando:
+
+```bash
+python tools/dataset/dataset_report.py --dataset-root artifacts/local/datasets/<dataset-name>
+```
+
+Output default:
+
+```text
+<dataset-root>/dataset_report.yaml
+```
+
+### `tools/dataset/fetch_unsplash_backgrounds.py`
+
+Scarica sfondi tematici da Unsplash per creare domini pseudo-reali non etichettati.
+
+Comando:
+
+```bash
+python tools/dataset/fetch_unsplash_backgrounds.py --themes "forest,industrial,kitchen" --count 120
+```
+
+Autenticazione:
+
+- `--access-key <UNSPLASH_ACCESS_KEY>`
+- oppure variabile ambiente `UNSPLASH_ACCESS_KEY`
+
+Output default:
+
+```text
+artifacts/local/background_domains/unsplash/
+```
+
+Uso con pipeline (config override):
+
+```yaml
+image_transform_overrides:
+	use_real_backgrounds: true
+	real_background_prob: 0.75
+	real_background_dirs:
+		- artifacts/local/background_domains/unsplash/forest
+		- artifacts/local/background_domains/unsplash/industrial
+		- artifacts/local/background_domains/unsplash/kitchen
+```
+
+In questo modo il generatore campiona (in parte) sfondi fotografici reali invece dei soli sfondi sintetici.
+
 ## Tool model registry
 
 ### `tools/model_registry/drive_model_sync.py`

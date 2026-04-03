@@ -52,6 +52,12 @@ class ImageTransformSettings:
     # Augmentazione sfondi negativi
     AUGMENT_NEGATIVE_BACKGROUNDS = True
 
+    # Sfondi reali opzionali (es. Unsplash) per ridurre il domain gap.
+    # Si configurano via image_transform_overrides.
+    USE_REAL_BACKGROUNDS = False
+    REAL_BACKGROUND_DIRS: list[str] = []
+    REAL_BACKGROUND_PROB = 0.65
+
 
 class DatasetGenerationSettings:
     """Impostazioni per la generazione del dataset."""

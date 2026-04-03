@@ -27,8 +27,9 @@ from config_utils import (
 )
 from settings import DatasetGenerationSettings, ImageTransformSettings, TrainingSettings
 
-APP_VERSION = "2026.04.03.14"
+APP_VERSION = "2026.04.03.15"
 CONFIGS_DIR = PROJECT_ROOT / "configs"
+UNSPLASH_BACKGROUND_ROOT = PROJECT_ROOT / "artifacts" / "local" / "background_domains" / "unsplash"
 
 LOCAL_PERSISTENT_ROOT_PREFIX = "artifacts/"
 CLOUD_PERSISTENT_ROOT_PREFIX = "/content/drive/MyDrive/"
@@ -57,6 +58,9 @@ FIELD_HELP_TEXTS: dict[str, str] = {
     "Image size (training)": "Risoluzione usata da YOLO durante il training.",
     "Resume policy": "auto = riprende da checkpoint se esiste, never = ricomincia sempre.",
     "Force regenerate dataset": "Se attivo, rigenera il dataset anche se una versione compatibile esiste gia'.",
+    "Usa sfondi reali": "Se attivo, il generatore prova a usare foto reali (es. Unsplash) se hai configurato real_background_dirs nelle opzioni avanzate.",
+    "Probabilita sfondi reali": "Percentuale di campionamento sfondi reali rispetto ai sintetici (0-100%).",
+    "Cartelle domini Unsplash": "Nomi cartelle sotto artifacts/local/background_domains/unsplash da usare per i background reali.",
     "Require GPU": "Se attivo, blocca il training se CUDA non e' disponibile (evita training CPU lento involontario).",
 }
 
@@ -194,6 +198,9 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.train_split_var = tk.StringVar()
         self.dataset_seed_var = tk.StringVar()
         self.force_regenerate_var = tk.BooleanVar(value=False)
+        self.use_real_backgrounds_var = tk.BooleanVar(value=False)
+        self.real_background_prob_var = tk.IntVar(value=65)
+        self.real_background_domains_var = tk.StringVar(value="forest, industrial, kitchen")
         self.training_label_var = tk.StringVar()
         self.model_size_var = tk.StringVar()
         self.device_var = tk.StringVar()
@@ -692,6 +699,35 @@ class ExperimentConfiguratorApp(tk.Tk):
         force_cb.grid(row=(len(dataset_fields) + 1) // 2, column=0, columnspan=4, sticky=tk.W, pady=(6, 0))
         self._add_help_tooltip(force_cb, self._label_help("Force regenerate dataset"))
 
+        real_bg_row = (len(dataset_fields) + 1) // 2 + 1
+        real_bg_cb = ttk.Checkbutton(ds_frame, text="Usa sfondi reali (se disponibili)", variable=self.use_real_backgrounds_var)
+        real_bg_cb.grid(row=real_bg_row, column=0, columnspan=4, sticky=tk.W, pady=(6, 0))
+        self._add_help_tooltip(real_bg_cb, self._label_help("Usa sfondi reali"))
+
+        prob_row = real_bg_row + 1
+        prob_lbl = ttk.Label(ds_frame, text="Probabilita sfondi reali")
+        prob_lbl.grid(row=prob_row, column=0, sticky=tk.W, padx=(0, 8), pady=(6, 0))
+        self._add_help_tooltip(prob_lbl, self._label_help("Probabilita sfondi reali"))
+        prob_scale = ttk.Scale(ds_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.real_background_prob_var)
+        prob_scale.grid(row=prob_row, column=1, sticky="ew", pady=(6, 0))
+        self.real_background_prob_label = ttk.Label(ds_frame, text="65%")
+        self.real_background_prob_label.grid(row=prob_row, column=2, columnspan=2, sticky=tk.W, padx=(8, 0), pady=(6, 0))
+
+        domains_row = prob_row + 1
+        domains_lbl = ttk.Label(ds_frame, text="Cartelle domini Unsplash")
+        domains_lbl.grid(row=domains_row, column=0, sticky=tk.W, padx=(0, 8), pady=(6, 0))
+        self._add_help_tooltip(domains_lbl, self._label_help("Cartelle domini Unsplash"))
+        ttk.Entry(ds_frame, textvariable=self.real_background_domains_var).grid(row=domains_row, column=1, columnspan=3, sticky="ew", pady=(6, 0))
+        ttk.Label(
+            ds_frame,
+            text="Esempi domini: forest, industrial, kitchen, warehouse, campsite. Le cartelle vengono lette da artifacts/local/background_domains/unsplash/<dominio>.",
+            foreground="#555555",
+            wraplength=900,
+        ).grid(row=domains_row + 1, column=0, columnspan=4, sticky=tk.W, pady=(2, 0))
+
+        self.real_background_prob_var.trace_add("write", self._update_real_background_prob_label)
+        self._update_real_background_prob_label()
+
         tr_frame = ttk.LabelFrame(base_frame, text="Opzioni base training", padding=10)
         tr_frame.pack(fill=tk.X, pady=(0, 10))
         tr_frame.columnconfigure(1, weight=1)
@@ -901,12 +937,22 @@ class ExperimentConfiguratorApp(tk.Tk):
             "OVERWRITE_EXISTING",
             "VERBOSE",
         }
+        image_transform_exclude = {
+            "USE_REAL_BACKGROUNDS",
+            "REAL_BACKGROUND_DIRS",
+            "REAL_BACKGROUND_PROB",
+        }
 
         return {
             "dataset_settings_overrides": self._iter_uppercase_settings(DatasetGenerationSettings, exclude=dataset_exclude),
-            "image_transform_overrides": self._iter_uppercase_settings(ImageTransformSettings),
+            "image_transform_overrides": self._iter_uppercase_settings(ImageTransformSettings, exclude=image_transform_exclude),
             "training_overrides": self._iter_uppercase_settings(TrainingSettings, exclude=training_exclude),
         }
+
+    def _update_real_background_prob_label(self, *_args: object) -> None:
+        if hasattr(self, "real_background_prob_label"):
+            value = max(0, min(100, int(self.real_background_prob_var.get() or 0)))
+            self.real_background_prob_label.configure(text=f"{value}%")
 
     def _value_to_text(self, value: object) -> str:
         if isinstance(value, (str, int, float, bool)) or value is None:
@@ -998,6 +1044,28 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.train_split_var.set(self._to_form_text(dataset.get("train_split", "")))
         self.dataset_seed_var.set(self._to_form_text(dataset.get("seed", "")))
         self.force_regenerate_var.set(bool(dataset.get("force_regenerate", False)))
+        image_transform_overrides = config.get("image_transform_overrides", {})
+        if isinstance(image_transform_overrides, dict):
+            self.use_real_backgrounds_var.set(bool(image_transform_overrides.get("use_real_backgrounds", False)))
+            raw_prob = image_transform_overrides.get("real_background_prob", 0.65)
+            try:
+                self.real_background_prob_var.set(max(0, min(100, int(round(float(raw_prob) * 100)))))
+            except (TypeError, ValueError):
+                self.real_background_prob_var.set(65)
+
+            raw_dirs = image_transform_overrides.get("real_background_dirs", [])
+            domain_names: list[str] = []
+            if isinstance(raw_dirs, list):
+                for item in raw_dirs:
+                    text = str(item).strip()
+                    if not text:
+                        continue
+                    domain_names.append(Path(text).name)
+            self.real_background_domains_var.set(", ".join(domain_names) if domain_names else "forest, industrial, kitchen")
+        else:
+            self.use_real_backgrounds_var.set(False)
+            self.real_background_prob_var.set(65)
+            self.real_background_domains_var.set("forest, industrial, kitchen")
 
         self.training_label_var.set(str(training.get("label", "")))
         self.model_size_var.set(self._to_model_size_display(str(training.get("model_size", ""))))
@@ -1080,7 +1148,16 @@ class ExperimentConfiguratorApp(tk.Tk):
         config["training"]["resume"] = self.resume_policy_var.get().strip()
 
         config["dataset_settings_overrides"] = self._collect_guided_overrides("dataset_settings_overrides")
-        config["image_transform_overrides"] = self._collect_guided_overrides("image_transform_overrides")
+        image_transform_overrides = self._collect_guided_overrides("image_transform_overrides")
+        image_transform_overrides["use_real_backgrounds"] = bool(self.use_real_backgrounds_var.get())
+        image_transform_overrides["real_background_prob"] = max(0.0, min(1.0, float(self.real_background_prob_var.get()) / 100.0))
+
+        domains_raw = self.real_background_domains_var.get().strip()
+        domains = [chunk.strip() for chunk in domains_raw.split(",") if chunk.strip()]
+        image_transform_overrides["real_background_dirs"] = [
+            (UNSPLASH_BACKGROUND_ROOT / domain).as_posix() for domain in domains
+        ]
+        config["image_transform_overrides"] = image_transform_overrides
         config["training_overrides"] = self._collect_guided_overrides("training_overrides")
         config.pop("extends", None)
         return config

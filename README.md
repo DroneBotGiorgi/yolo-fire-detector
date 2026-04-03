@@ -169,6 +169,7 @@ artifacts/local/datasets/<dataset-label>-<fingerprint>/
 File principali:
 
 - `dataset_manifest.yaml`
+- `dataset_report.yaml`
 - `yolo_dataset.yaml`
 - `images/train/`
 - `images/val/`
@@ -204,6 +205,25 @@ File principali:
 - `latest.yaml`
 
 `latest.yaml` permette a `detect.py` di trovare automaticamente il modello piu' recente.
+
+Nota: la pipeline crea/aggiorna automaticamente anche `dataset_report.yaml` nella root dataset con statistiche QA (split, bbox, ratio positivi/negativi).
+
+Per simulare domini piu' realistici puoi scaricare sfondi tematici con:
+
+```bash
+python tools/dataset/fetch_unsplash_backgrounds.py --themes "forest,industrial,kitchen" --count 120
+```
+
+e attivare nel config:
+
+```yaml
+image_transform_overrides:
+  use_real_backgrounds: true
+  real_background_prob: 0.75
+  real_background_dirs:
+    - artifacts/local/background_domains/unsplash/forest
+    - artifacts/local/background_domains/unsplash/industrial
+```
 
 ## Come usare detect.py
 

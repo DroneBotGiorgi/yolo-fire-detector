@@ -17,6 +17,8 @@ from config_utils import deep_merge, load_layered_config
 from generator import generate_dataset
 from settings import DatasetGenerationSettings, ImageTransformSettings, TrainingSettings
 from train import create_dataset_yaml, train_model
+from tools.dataset.dataset_report import generate_dataset_report
+from tools.dataset.fetch_unsplash_backgrounds import fetch_backgrounds, load_unsplash_access_key
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -246,12 +248,19 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
 
     if reused:
         manifest = read_yaml(manifest_path)
+        report_path = dataset_root / "dataset_report.yaml"
+        try:
+            generate_dataset_report(dataset_root, output_yaml=report_path)
+            print(f"📊 Dataset report aggiornato: {report_path}")
+        except Exception as exc:  # pragma: no cover - report must not block pipeline
+            print(f"⚠️ Dataset report non disponibile ({dataset_root}): {exc}")
         print(f"♻️ Dataset riutilizzato: {dataset_root}")
         return {
             "root": dataset_root,
             "fingerprint": fingerprint,
             "manifest": manifest,
             "manifest_path": manifest_path,
+            "report_path": report_path,
             "reused": True,
         }
 
@@ -327,11 +336,18 @@ def prepare_dataset(config: dict[str, Any], project_root: Path) -> dict[str, Any
     )
     write_yaml(manifest_path, manifest)
     print(f"🧾 Manifest dataset scritto in: {manifest_path}")
+    report_path = dataset_root / "dataset_report.yaml"
+    try:
+        generate_dataset_report(dataset_root, output_yaml=report_path)
+        print(f"📊 Dataset report scritto in: {report_path}")
+    except Exception as exc:  # pragma: no cover - report must not block pipeline
+        print(f"⚠️ Dataset report non disponibile ({dataset_root}): {exc}")
     return {
         "root": dataset_root,
         "fingerprint": fingerprint,
         "manifest": manifest,
         "manifest_path": manifest_path,
+        "report_path": report_path,
         "reused": False,
     }
 
@@ -428,6 +444,71 @@ def cleanup_completed_run(run_dir: Path) -> None:
     shutil.rmtree(run_dir / "weights", ignore_errors=True)
 
 
+def _ensure_real_backgrounds() -> None:
+    """Auto-fetch Unsplash backgrounds for any configured dirs that are missing or empty.
+
+    Reads REAL_BACKGROUND_DIRS from ImageTransformSettings (already applied from config).
+    Skips silently if USE_REAL_BACKGROUNDS is False or no dirs are configured.
+    Requires UNSPLASH_ACCESS_KEY env var; warns and continues if missing.
+    """
+    if not bool(getattr(ImageTransformSettings, "USE_REAL_BACKGROUNDS", False)):
+        return
+
+    dirs: list[str] = getattr(ImageTransformSettings, "REAL_BACKGROUND_DIRS", []) or []
+    if not dirs:
+        return
+
+    _image_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+    def _is_empty(p: Path) -> bool:
+        if not p.exists():
+            return True
+        return not any(f.suffix.lower() in _image_exts for f in p.rglob("*") if f.is_file())
+
+    missing_themes: list[str] = []
+    output_root: Path | None = None
+
+    for raw_dir in dirs:
+        d = Path(raw_dir)
+        if _is_empty(d):
+            missing_themes.append(d.name)
+            if output_root is None:
+                output_root = d.parent  # e.g. .../unsplash/
+
+    if not missing_themes:
+        return
+
+    access_key = load_unsplash_access_key(PROJECT_ROOT)
+    if not access_key:
+        print(
+            "⚠️  Sfondi reali abilitati ma le cartelle sono vuote o mancanti: "
+            + ", ".join(missing_themes)
+            + "\n   Imposta UNSPLASH_ACCESS_KEY oppure crea .env.local/.env con la chiave, poi riprova;"
+            + "\n   in alternativa scarica manualmente con:"
+            + "\n   python tools/dataset/fetch_unsplash_backgrounds.py "
+            + f"--themes \"{','.join(missing_themes)}\" --count 60"
+        )
+        return
+
+    print(f"🌐 Scarico sfondi Unsplash per i temi mancanti: {', '.join(missing_themes)} ...")
+    assert output_root is not None
+    try:
+        result = fetch_backgrounds(
+            access_key=access_key,
+            themes=missing_themes,
+            output_root=output_root,
+            total_per_theme=60,
+            per_page=30,
+            orientation="landscape",
+            min_width=1200,
+        )
+        for theme, info in result.get("themes", {}).items():
+            print(f"   {theme}: {info.get('downloaded', 0)}/{info.get('requested', 0)} immagini scaricate")
+    except Exception as exc:
+        print(f"⚠️  Errore durante il download degli sfondi Unsplash: {exc}")
+        print("   Il dataset verrà generato con soli sfondi sintetici.")
+
+
 def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bool = False) -> dict[str, Any]:
     """Execute the dataset-generation pipeline and optionally skip training."""
     project_cfg = config["project"]
@@ -436,6 +517,8 @@ def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bo
     apply_overrides(DatasetGenerationSettings, config.get("dataset_settings_overrides", {}), "dataset_settings_overrides")
     apply_overrides(ImageTransformSettings, config.get("image_transform_overrides", {}), "image_transform_overrides")
     apply_overrides(TrainingSettings, config.get("training_overrides", {}), "training_overrides")
+
+    _ensure_real_backgrounds()
 
     dataset_info = prepare_dataset(config, PROJECT_ROOT)
     persistent_root = resolve_path(project_cfg["persistent_root"], PROJECT_ROOT)
@@ -468,6 +551,7 @@ def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bo
             "mode": "dataset-only",
             "dataset_root": portable_path(dataset_info["root"], persistent_root),
             "dataset_manifest_path": portable_path(dataset_info["manifest_path"], persistent_root),
+            "dataset_report_path": portable_path(dataset_info["report_path"], persistent_root),
             "run_dir": portable_path(run_dir, persistent_root),
             "resolved_config_path": portable_path(run_dir / "resolved_config.yaml", persistent_root),
             "run_label": run_label,
@@ -526,6 +610,7 @@ def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bo
     summary = {
         "dataset_root": portable_path(dataset_info["root"], persistent_root),
         "dataset_manifest_path": portable_path(dataset_info["manifest_path"], persistent_root),
+        "dataset_report_path": portable_path(dataset_info["report_path"], persistent_root),
         "run_dir": portable_path(run_dir, persistent_root),
         "training_run_path": portable_path(run_dir / "training_run.yaml", persistent_root),
         "run_label": run_label,
@@ -558,6 +643,40 @@ def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bo
     return summary
 
 
+_GENERATED_CONFIGS_DIR = PROJECT_ROOT / "configs" / "generated"
+
+
+def _fuzzy_resolve_config(name: str) -> Path:
+    """Find a config YAML by name (with or without .yaml) inside configs/generated/.
+
+    Resolution order:
+    1. Exact filename match (``name`` or ``name.yaml``)
+    2. ``startswith`` match (first alphabetically)
+
+    Raises FileNotFoundError if nothing matches.
+    """
+    stem = name.removesuffix(".yaml")
+    candidates = sorted(_GENERATED_CONFIGS_DIR.glob("*.yaml"))
+
+    # 1. exact match
+    for candidate in candidates:
+        if candidate.stem == stem or candidate.name == name:
+            print(f"ℹ️  Config trovata in configs/generated/: {candidate.name}")
+            return candidate
+
+    # 2. startswith match
+    for candidate in candidates:
+        if candidate.stem.startswith(stem) or candidate.name.startswith(name):
+            print(f"ℹ️  Config trovata per prefisso in configs/generated/: {candidate.name}")
+            return candidate
+
+    raise FileNotFoundError(
+        f"Config non trovata: '{name}'. "
+        f"Cerca in configs/generated/ i file disponibili: "
+        f"{[c.name for c in candidates] or '(nessuno)'}"
+    )
+
+
 def main() -> None:
     """CLI entrypoint for config-driven experiments."""
     parser = argparse.ArgumentParser(description="Pipeline guidata da file YAML")
@@ -567,7 +686,7 @@ def main() -> None:
 
     config_path = resolve_path(args.config, PROJECT_ROOT)
     if config_path is None or not config_path.exists():
-        raise FileNotFoundError(f"Config non trovata: {args.config}")
+        config_path = _fuzzy_resolve_config(args.config)
 
     config = load_config(config_path)
     run_pipeline(config, config_path, skip_training=args.skip_training)
