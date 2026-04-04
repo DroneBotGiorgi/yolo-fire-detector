@@ -1,0 +1,28 @@
+description:
+  title: Nano bilanciato operativo
+  summary: Compromesso tra precisione e recall per uso generale.
+  use_when: Vuoi un solo settaggio robusto senza cambiare spesso soglia.
+  tradeoff: Meno rigido sui FP rispetto al preset precisione.
+
+training:
+  model_size: n
+  epochs: 55
+  batch_size: 16
+  image_size: 640
+  resume: auto
+
+training_overrides:
+  patience: 12
+  learning_rate_init: 0.009
+  learning_rate_final: 0.0009
+  momentum: 0.937
+  weight_decay: 0.0005
+  rotation_degrees: 12
+  translate: 0.1
+  scale: 0.45
+  flip_vertical: 0.0
+  flip_horizontal: 0.3
+  mosaic: 0.8
+  mixed_precision: true
+  overwrite_existing: true
+  verbose: true

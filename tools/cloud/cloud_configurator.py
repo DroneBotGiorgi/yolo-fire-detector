@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import sys
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import yaml
 
@@ -27,7 +27,7 @@ from config_utils import (
 )
 from settings import DatasetGenerationSettings, ImageTransformSettings, TrainingSettings
 
-APP_VERSION = "2026.04.03.15"
+APP_VERSION = "2026.04.04.4"
 CONFIGS_DIR = PROJECT_ROOT / "configs"
 UNSPLASH_BACKGROUND_ROOT = PROJECT_ROOT / "artifacts" / "local" / "background_domains" / "unsplash"
 
@@ -52,7 +52,7 @@ FIELD_HELP_TEXTS: dict[str, str] = {
     "Dataset seed": "Seed per riproducibilita'. Stesso seed = stesso dataset.",
     "Training label": "Etichetta del training, compare nel run e nell'export.",
     "Model size": "Taglia YOLO descrittiva: Nano, Small, Medium, Large, XLarge.",
-    "Device": "Dove eseguire: gpu = GPU, cpu = CPU.",
+    "Device": "Dove eseguire: auto = prova GPU e fallback CPU, gpu = forza GPU, cpu = forza CPU.",
     "Epochs": "Numero di epoche di addestramento.",
     "Batch size": "Immagini per step. Riduci se esaurisci la VRAM.",
     "Image size (training)": "Risoluzione usata da YOLO durante il training.",
@@ -61,7 +61,9 @@ FIELD_HELP_TEXTS: dict[str, str] = {
     "Usa sfondi reali": "Se attivo, il generatore prova a usare foto reali (es. Unsplash) se hai configurato real_background_dirs nelle opzioni avanzate.",
     "Probabilita sfondi reali": "Percentuale di campionamento sfondi reali rispetto ai sintetici (0-100%).",
     "Cartelle domini Unsplash": "Nomi cartelle sotto artifacts/local/background_domains/unsplash da usare per i background reali.",
-    "Require GPU": "Se attivo, blocca il training se CUDA non e' disponibile (evita training CPU lento involontario).",
+    "Marker size min ratio": "Dimensione minima del marker nel frame (0.01 = 1% lato immagine). Valori troppo bassi introducono campioni poco informativi.",
+    "Marker size max ratio": "Dimensione massima del marker nel frame (0.35 = 35% lato immagine). Alza questo valore se prevedi passaggi molto ravvicinati.",
+
 }
 
 MODEL_SIZE_DISPLAY_TO_CODE: dict[str, str] = {
@@ -73,10 +75,12 @@ MODEL_SIZE_DISPLAY_TO_CODE: dict[str, str] = {
 }
 MODEL_SIZE_CODE_TO_DISPLAY: dict[str, str] = {code: label for label, code in MODEL_SIZE_DISPLAY_TO_CODE.items()}
 DEVICE_DISPLAY_TO_CONFIG: dict[str, str] = {
+    "auto": "auto",
     "gpu": "0",
     "cpu": "cpu",
 }
 DEVICE_CONFIG_TO_DISPLAY: dict[str, str] = {
+    "auto": "auto",
     "0": "gpu",
     "cpu": "cpu",
 }
@@ -187,6 +191,8 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.complete_config_var = tk.StringVar(value="")
         self.dataset_preset_var = tk.StringVar(value="")
         self.training_preset_var = tk.StringVar(value="")
+        self.dataset_preset_description_var = tk.StringVar(value="Seleziona un preset dataset per vedere la descrizione.")
+        self.training_preset_description_var = tk.StringVar(value="Seleziona un preset training per vedere la descrizione.")
         self.target_env_var = tk.StringVar(value="local")
         self.save_name_var = tk.StringVar(value="config.yaml")
 
@@ -197,14 +203,15 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.negative_ratio_var = tk.StringVar()
         self.train_split_var = tk.StringVar()
         self.dataset_seed_var = tk.StringVar()
+        self.fire_scale_min_var = tk.StringVar()
+        self.fire_scale_max_var = tk.StringVar()
         self.force_regenerate_var = tk.BooleanVar(value=False)
         self.use_real_backgrounds_var = tk.BooleanVar(value=False)
         self.real_background_prob_var = tk.IntVar(value=65)
-        self.real_background_domains_var = tk.StringVar(value="forest, industrial, kitchen")
+        self.real_background_domains_var = tk.StringVar(value="")
         self.training_label_var = tk.StringVar()
         self.model_size_var = tk.StringVar()
-        self.device_var = tk.StringVar()
-        self.require_gpu_var = tk.BooleanVar(value=True)
+        self.device_var = tk.StringVar(value="auto")
         self.epochs_var = tk.StringVar()
         self.batch_size_var = tk.StringVar()
         self.training_image_size_var = tk.StringVar()
@@ -234,6 +241,8 @@ class ExperimentConfiguratorApp(tk.Tk):
             self.negative_ratio_var,
             self.train_split_var,
             self.dataset_seed_var,
+            self.fire_scale_min_var,
+            self.fire_scale_max_var,
             self.training_label_var,
             self.model_size_var,
             self.device_var,
@@ -245,10 +254,15 @@ class ExperimentConfiguratorApp(tk.Tk):
             var.trace_add("write", self._on_base_field_change)
         self.dataset_label_var.trace_add("write", self._update_project_label_preview)
         self.training_label_var.trace_add("write", self._update_project_label_preview)
+        self.dataset_preset_var.trace_add("write", self._on_dataset_preset_change)
+        self.training_preset_var.trace_add("write", self._on_training_preset_change)
         self.image_size_var.trace_add("write", self._sync_dataset_to_training_image_size)
         self.training_image_size_var.trace_add("write", self._sync_training_to_dataset_image_size)
         self.save_name_var.trace_add("write", self._on_save_name_change)
+        self.target_env_var.trace_add("write", self._on_target_env_change)
+        self.use_real_backgrounds_var.trace_add("write", self._on_use_real_backgrounds_change)
         self._apply_config_to_form(self.loaded_config)
+        self._on_target_env_change()
 
     def _list_dataset_presets(self) -> list[str]:
         if not DATASET_PRESETS_DIR.exists():
@@ -290,8 +304,7 @@ class ExperimentConfiguratorApp(tk.Tk):
             "training": {
                 "label": "training-name",
                 "model_size": "",
-                "device": "",
-                "require_gpu": True,
+                "device": "auto",
                 "epochs": None,
                 "batch_size": 16,
                 "image_size": None,
@@ -381,6 +394,26 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.save_name_var.set(auto_name)
         self._updating_save_name_programmatically = False
 
+    def _on_target_env_change(self, *_args: object) -> None:
+        env = self.target_env_var.get().strip().lower()
+        if env == "cloud":
+            if self.device_var.get().strip().lower() in {"", "auto"}:
+                self.device_var.set("gpu")
+        else:
+            if self.device_var.get().strip().lower() in {"", "gpu"}:
+                self.device_var.set("auto")
+
+    def _on_use_real_backgrounds_change(self, *_args: object) -> None:
+        enabled = self.use_real_backgrounds_var.get()
+        state = tk.NORMAL if enabled else tk.DISABLED
+        if hasattr(self, "prob_scale"):
+            self.prob_scale.configure(state=state)
+        if hasattr(self, "domains_entry"):
+            self.domains_entry.configure(state=state)
+        if not enabled:
+            # In synthetic-only mode domains are intentionally left empty.
+            self.real_background_domains_var.set("")
+
     def _validate_numeric_input(self, text: str, allow_decimal: bool) -> bool:
         if text == "":
             return True
@@ -414,11 +447,14 @@ class ExperimentConfiguratorApp(tk.Tk):
             and self._is_ratio(self.negative_ratio_var.get())
             and self._is_ratio(self.train_split_var.get())
             and self._is_positive_int(self.dataset_seed_var.get())
+            and self._is_ratio(self.fire_scale_min_var.get())
+            and self._is_ratio(self.fire_scale_max_var.get())
+            and float(self.fire_scale_min_var.get() or 0.0) < float(self.fire_scale_max_var.get() or 0.0)
         )
         training_ok = (
             bool(self.training_label_var.get().strip())
             and self._to_model_size_code(self.model_size_var.get()) in {"n", "s", "m", "l", "x"}
-            and self.device_var.get().strip().lower() in {"gpu", "cpu"}
+            and self.device_var.get().strip().lower() in {"auto", "gpu", "cpu"}
             and self._is_positive_int(self.epochs_var.get())
             and self._is_positive_int(self.training_image_size_var.get())
             and self.resume_policy_var.get().strip() in {"auto", "never"}
@@ -448,6 +484,50 @@ class ExperimentConfiguratorApp(tk.Tk):
         with open(path, "r", encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
 
+    def _preset_description_text(self, payload: dict) -> str:
+        description = payload.get("description")
+        if isinstance(description, str):
+            text = description.strip()
+            return text or "(Nessuna descrizione nel preset)"
+        if isinstance(description, dict):
+            parts: list[str] = []
+            for key in ("title", "summary", "use_when", "tradeoff"):
+                value = description.get(key)
+                if isinstance(value, str) and value.strip():
+                    if key == "title":
+                        parts.append(value.strip())
+                    elif key == "summary":
+                        parts.append(value.strip())
+                    elif key == "use_when":
+                        parts.append(f"Quando usarlo: {value.strip()}")
+                    elif key == "tradeoff":
+                        parts.append(f"Tradeoff: {value.strip()}")
+            if parts:
+                return "\n".join(parts)
+        return "(Nessuna descrizione nel preset)"
+
+    def _on_dataset_preset_change(self, *_args: object) -> None:
+        name = self.dataset_preset_var.get().strip()
+        if not name:
+            self.dataset_preset_description_var.set("Seleziona un preset dataset per vedere la descrizione.")
+            return
+        try:
+            payload = self._load_preset_yaml(DATASET_PRESETS_DIR / f"{name}.yaml")
+            self.dataset_preset_description_var.set(self._preset_description_text(payload))
+        except Exception as exc:
+            self.dataset_preset_description_var.set(f"Errore lettura preset: {exc}")
+
+    def _on_training_preset_change(self, *_args: object) -> None:
+        name = self.training_preset_var.get().strip()
+        if not name:
+            self.training_preset_description_var.set("Seleziona un preset training per vedere la descrizione.")
+            return
+        try:
+            payload = self._load_preset_yaml(TRAINING_PRESETS_DIR / f"{name}.yaml")
+            self.training_preset_description_var.set(self._preset_description_text(payload))
+        except Exception as exc:
+            self.training_preset_description_var.set(f"Errore lettura preset: {exc}")
+
     def apply_dataset_preset(self) -> None:
         name = self.dataset_preset_var.get().strip()
         if not name:
@@ -466,6 +546,40 @@ class ExperimentConfiguratorApp(tk.Tk):
                     var.set(str(ds[key]))
             if "force_regenerate" in ds:
                 self.force_regenerate_var.set(bool(ds["force_regenerate"]))
+
+            dataset_overrides = data.get("dataset_settings_overrides", {})
+            if isinstance(dataset_overrides, dict):
+                if "fire_scale_min" in dataset_overrides:
+                    self.fire_scale_min_var.set(self._to_form_text(dataset_overrides["fire_scale_min"]))
+                if "fire_scale_max" in dataset_overrides:
+                    self.fire_scale_max_var.set(self._to_form_text(dataset_overrides["fire_scale_max"]))
+
+            # Sync the base "real backgrounds" controls used by build_config().
+            # Without this, applying a preset might not update the effective generation mode.
+            image_transform_data = data.get("image_transform_overrides", {})
+            if isinstance(image_transform_data, dict):
+                use_real = bool(image_transform_data.get("use_real_backgrounds", False))
+                self.use_real_backgrounds_var.set(use_real)
+
+                if "real_background_prob" in image_transform_data:
+                    raw_prob = image_transform_data.get("real_background_prob", 0.65)
+                    try:
+                        self.real_background_prob_var.set(max(0, min(100, int(round(float(raw_prob) * 100)))))
+                    except (TypeError, ValueError):
+                        self.real_background_prob_var.set(65)
+                else:
+                    self.real_background_prob_var.set(100 if use_real else 0)
+
+                raw_dirs = image_transform_data.get("real_background_dirs", [])
+                domain_names: list[str] = []
+                if use_real and isinstance(raw_dirs, list):
+                    for item in raw_dirs:
+                        text = str(item).strip()
+                        if not text:
+                            continue
+                        domain_names.append(Path(text).name)
+                self.real_background_domains_var.set(", ".join(domain_names) if domain_names else "")
+
             for section in ("dataset_settings_overrides", "image_transform_overrides"):
                 section_data = data.get(section, {})
                 if isinstance(section_data, dict):
@@ -499,6 +613,31 @@ class ExperimentConfiguratorApp(tk.Tk):
                     orig_var.set(self._value_to_text(section_data[field_name]) if field_name in section_data else "(non nel preset)")
         except Exception as exc:
             messagebox.showerror("Errore preset training", str(exc))
+
+    def reset_dataset_base_options(self) -> None:
+        self.dataset_preset_var.set("")
+        self.dataset_label_var.set("dataset-name")
+        self.num_images_var.set(self._to_form_text(DatasetGenerationSettings.NUM_IMAGES))
+        self.image_size_var.set(self._to_form_text(DatasetGenerationSettings.IMAGE_SIZE))
+        self.negative_ratio_var.set(self._to_form_text(DatasetGenerationSettings.NEGATIVE_RATIO))
+        self.train_split_var.set(self._to_form_text(DatasetGenerationSettings.TRAIN_SPLIT))
+        self.dataset_seed_var.set("42")
+        self.fire_scale_min_var.set(self._to_form_text(DatasetGenerationSettings.FIRE_SCALE_MIN))
+        self.fire_scale_max_var.set(self._to_form_text(DatasetGenerationSettings.FIRE_SCALE_MAX))
+        self.force_regenerate_var.set(False)
+        self.use_real_backgrounds_var.set(False)
+        self.real_background_prob_var.set(0)
+        self.real_background_domains_var.set("")
+
+    def reset_training_base_options(self) -> None:
+        self.training_preset_var.set("")
+        self.training_label_var.set("training-name")
+        self.model_size_var.set(self._to_model_size_display(TrainingSettings.MODEL_SIZE))
+        self.device_var.set("auto" if self.target_env_var.get().strip().lower() != "cloud" else "gpu")
+        self.epochs_var.set(self._to_form_text(TrainingSettings.EPOCHS))
+        self.batch_size_var.set(self._to_form_text(TrainingSettings.BATCH_SIZE))
+        self.training_image_size_var.set(self._to_form_text(TrainingSettings.IMAGE_SIZE))
+        self.resume_policy_var.set("auto")
 
     # --------------------------------------------------------- load / refresh
 
@@ -574,18 +713,16 @@ class ExperimentConfiguratorApp(tk.Tk):
         header.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(header, text="Experiment Configurator", font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT, padx=(0, 8))
 
-        save_name_row = ttk.Frame(header)
-        save_name_row.pack(side=tk.RIGHT)
-        env_switch = ttk.Frame(save_name_row)
+        right_controls = ttk.Frame(header)
+        right_controls.pack(side=tk.RIGHT)
+        env_switch = ttk.Frame(right_controls)
         env_switch.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(env_switch, text="Ambiente:").pack(side=tk.LEFT)
         ttk.Radiobutton(env_switch, text="Local", variable=self.target_env_var, value="local").pack(side=tk.LEFT, padx=(4, 2))
         ttk.Radiobutton(env_switch, text="Cloud", variable=self.target_env_var, value="cloud").pack(side=tk.LEFT, padx=(2, 0))
-        ttk.Label(save_name_row, text="File config:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Entry(save_name_row, textvariable=self.save_name_var, width=28).pack(side=tk.LEFT, padx=(0, 6))
 
         self.save_button_top = tk.Button(
-            save_name_row,
+            right_controls,
             text="Salva config finale",
             command=self.save_config,
             bg="#1f6feb", fg="#ffffff",
@@ -596,63 +733,70 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.save_button_top.pack(side=tk.LEFT)
         self._add_help_tooltip(self.save_button_top, "Salva la configurazione in configs/generated/ e aggiorna il latest dell'ambiente selezionato.")
 
+        summary = ttk.Frame(top_frame)
+        summary.pack(fill=tk.X, pady=(0, 2))
+        ttk.Label(summary, text="ID run/export:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(summary, textvariable=self.project_label_preview_var, state="readonly", width=44).pack(side=tk.LEFT, padx=(0, 12))
+        self.base_readiness_label = tk.Label(summary, textvariable=self.base_readiness_var, anchor="w", fg="#a15c00")
+        self.base_readiness_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
         # --- body without global page scrolling ---
         self.main_content = ttk.Frame(container, padding=8)
         self.main_content.pack(fill=tk.BOTH, expand=True)
 
-        notebook = ttk.Notebook(self.main_content, style="Blue.TNotebook")
-        notebook.pack(fill=tk.BOTH, expand=True)
+        self.main_notebook = ttk.Notebook(self.main_content, style="Blue.TNotebook")
+        self.main_notebook.pack(fill=tk.BOTH, expand=True)
 
-        tab_generale = ttk.Frame(notebook, padding=8)
-        tab_presets = ttk.Frame(notebook, padding=8)
-        tab_advanced = ttk.Frame(notebook, padding=8)
-        notebook.add(tab_generale, text="Generale")
-        notebook.add(tab_presets, text="Presets")
-        notebook.add(tab_advanced, text="Avanzate")
+        self.tab_generale = ttk.Frame(self.main_notebook, padding=8)
+        self.tab_presets = ttk.Frame(self.main_notebook, padding=8)
+        self.tab_advanced = ttk.Frame(self.main_notebook, padding=8)
+        self.main_notebook.add(self.tab_generale, text="Generale")
+        self.main_notebook.add(self.tab_presets, text="Presets")
+        self.main_notebook.add(self.tab_advanced, text="Avanzate")
 
-        self._build_generale_tab(tab_generale)
-        self._build_presets_tab(tab_presets)
-        self._build_advanced_tab(tab_advanced)
+        self._build_generale_tab(self.tab_generale)
+        self._build_presets_tab(self.tab_presets)
+        self._build_advanced_tab(self.tab_advanced)
 
     # ------------------------------------------------------ tab Generale
 
     def _build_generale_tab(self, parent: ttk.Frame) -> None:
-        parent.columnconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
 
-        # Esperimento auto-generato
-        proj_frame = ttk.LabelFrame(parent, text="Identificativo esperimento (auto)", padding=10)
-        proj_frame.pack(fill=tk.X, pady=(0, 10))
-        proj_frame.columnconfigure(1, weight=1)
-        proj_label = ttk.Label(proj_frame, text="ID run/export")
-        proj_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=4)
-        self._add_help_tooltip(proj_label, self._label_help("Project label"))
-        ttk.Entry(proj_frame, textvariable=self.project_label_preview_var, state="readonly").grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(
-            proj_frame,
-            text="Generato automaticamente da Dataset label + Training label.",
-            foreground="#555555",
-        ).grid(row=1, column=0, columnspan=2, sticky=tk.W)
-
-        # Base obbligatoria: dataset + training
-        base_frame = ttk.LabelFrame(parent, text="Scelte base obbligatorie", padding=10)
-        base_frame.pack(fill=tk.X, pady=(0, 10))
+        base_frame = ttk.LabelFrame(parent, text="Flusso guidato base", padding=10)
+        base_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         ttk.Label(
             base_frame,
-            text="Compila qui i parametri minimi prima di salvare: immagini di base, opzioni dataset e opzioni training.",
+            text="Compila i parametri minimi nelle 3 sezioni: Immagini, Dataset, Training.",
             foreground="#555555",
             wraplength=900,
+        ).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(
+            base_frame,
+            text="Se non sai da dove partire vai nella tab Presets: applichi un preset e poi rifinisci qui.",
+            foreground="#335c85",
+            wraplength=900,
         ).pack(anchor=tk.W, pady=(0, 8))
-        self.base_readiness_label = tk.Label(base_frame, textvariable=self.base_readiness_var, anchor="w", fg="#a15c00")
-        self.base_readiness_label.pack(fill=tk.X, pady=(0, 8))
 
-        img_frame = ttk.LabelFrame(base_frame, text="Immagini di fuoco di base  ★ obbligatorie", padding=10)
-        img_frame.pack(fill=tk.X, pady=(0, 10))
-        img_frame.columnconfigure(0, weight=1)
-        img_frame.rowconfigure(0, weight=1)
-        listbox_row = ttk.Frame(img_frame)
+        base_notebook = ttk.Notebook(base_frame)
+        base_notebook.pack(fill=tk.BOTH, expand=True)
+
+        img_frame = ttk.Frame(base_notebook, padding=8)
+        ds_frame = ttk.Frame(base_notebook, padding=8)
+        tr_frame = ttk.Frame(base_notebook, padding=8)
+        base_notebook.add(img_frame, text="Immagini")
+        base_notebook.add(ds_frame, text="Dataset")
+        base_notebook.add(tr_frame, text="Training")
+
+        img_group = ttk.LabelFrame(img_frame, text="Immagini di fuoco di base", padding=10)
+        img_group.pack(fill=tk.BOTH, expand=True)
+        img_group.columnconfigure(0, weight=1)
+        img_group.rowconfigure(0, weight=1)
+
+        listbox_row = ttk.Frame(img_group)
         listbox_row.pack(fill=tk.BOTH, expand=True)
         listbox_row.columnconfigure(0, weight=1)
-        self.fire_image_paths_listbox = tk.Listbox(listbox_row, selectmode=tk.EXTENDED, exportselection=False, height=6)
+        self.fire_image_paths_listbox = tk.Listbox(listbox_row, selectmode=tk.EXTENDED, exportselection=False, height=8)
         self.fire_image_paths_listbox.grid(row=0, column=0, sticky="nsew")
         assets_scrollbar = ttk.Scrollbar(listbox_row, orient=tk.VERTICAL, command=self.fire_image_paths_listbox.yview)
         assets_scrollbar.grid(row=0, column=1, sticky="ns")
@@ -663,16 +807,17 @@ class ExperimentConfiguratorApp(tk.Tk):
         ttk.Button(asset_buttons, text="Rimuovi selezionati", command=self.remove_selected_fire_image_paths).pack(fill=tk.X, pady=4)
         ttk.Button(asset_buttons, text="Pulisci lista", command=self.clear_fire_image_paths).pack(fill=tk.X, pady=4)
         ttk.Label(
-            img_frame,
-            text="I file PNG/JPG con sfondo trasparente funzionano meglio. Usa base_fire_images/ come punto di partenza.",
+            img_group,
+            text="Target consigliato: base_fire_images/fire.png (marker stampato).",
             foreground="#555555",
             wraplength=900,
         ).pack(anchor=tk.W, pady=(6, 0))
 
-        ds_frame = ttk.LabelFrame(base_frame, text="Opzioni base dataset", padding=10)
-        ds_frame.pack(fill=tk.X, pady=(0, 10))
-        ds_frame.columnconfigure(1, weight=1)
-        ds_frame.columnconfigure(3, weight=1)
+        ds_group = ttk.LabelFrame(ds_frame, text="Opzioni base dataset", padding=10)
+        ds_group.pack(fill=tk.BOTH, expand=True)
+        ds_group.columnconfigure(1, weight=1)
+        ds_group.columnconfigure(3, weight=1)
+
         dataset_fields = [
             ("Dataset label", self.dataset_label_var, "Dataset label"),
             ("Num images", self.num_images_var, "Num images"),
@@ -680,47 +825,51 @@ class ExperimentConfiguratorApp(tk.Tk):
             ("Negative ratio", self.negative_ratio_var, "Negative ratio"),
             ("Train split", self.train_split_var, "Train split"),
             ("Dataset seed", self.dataset_seed_var, "Dataset seed"),
+            ("Marker size min ratio", self.fire_scale_min_var, "Marker size min ratio"),
+            ("Marker size max ratio", self.fire_scale_max_var, "Marker size max ratio"),
         ]
         for idx, (txt, var, help_key) in enumerate(dataset_fields):
             row, col = divmod(idx, 2)
             col_label = col * 2
-            lbl = ttk.Label(ds_frame, text=txt)
+            lbl = ttk.Label(ds_group, text=txt)
             lbl.grid(row=row, column=col_label, sticky=tk.W, padx=(0 if col_label == 0 else 10, 8), pady=4)
             self._add_help_tooltip(lbl, self._label_help(help_key))
-            entry = ttk.Entry(ds_frame, textvariable=var)
+            entry = ttk.Entry(ds_group, textvariable=var)
             entry.grid(row=row, column=col_label + 1, sticky="ew", pady=4)
             if txt in {"Num images", "Image size (dataset)", "Dataset seed"}:
                 self._bind_numeric_validation(entry, allow_decimal=False)
-            elif txt in {"Negative ratio", "Train split"}:
+            elif txt in {"Negative ratio", "Train split", "Marker size min ratio", "Marker size max ratio"}:
                 self._bind_numeric_validation(entry, allow_decimal=True)
             if txt == "Dataset label":
                 entry.insert(0, "dataset-name")
-        force_cb = ttk.Checkbutton(ds_frame, text="Force regenerate dataset", variable=self.force_regenerate_var)
+
+        force_cb = ttk.Checkbutton(ds_group, text="Force regenerate dataset", variable=self.force_regenerate_var)
         force_cb.grid(row=(len(dataset_fields) + 1) // 2, column=0, columnspan=4, sticky=tk.W, pady=(6, 0))
         self._add_help_tooltip(force_cb, self._label_help("Force regenerate dataset"))
 
         real_bg_row = (len(dataset_fields) + 1) // 2 + 1
-        real_bg_cb = ttk.Checkbutton(ds_frame, text="Usa sfondi reali (se disponibili)", variable=self.use_real_backgrounds_var)
+        real_bg_cb = ttk.Checkbutton(ds_group, text="Usa sfondi reali (Unsplash)", variable=self.use_real_backgrounds_var)
         real_bg_cb.grid(row=real_bg_row, column=0, columnspan=4, sticky=tk.W, pady=(6, 0))
         self._add_help_tooltip(real_bg_cb, self._label_help("Usa sfondi reali"))
 
         prob_row = real_bg_row + 1
-        prob_lbl = ttk.Label(ds_frame, text="Probabilita sfondi reali")
+        prob_lbl = ttk.Label(ds_group, text="Probabilita sfondi reali")
         prob_lbl.grid(row=prob_row, column=0, sticky=tk.W, padx=(0, 8), pady=(6, 0))
         self._add_help_tooltip(prob_lbl, self._label_help("Probabilita sfondi reali"))
-        prob_scale = ttk.Scale(ds_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.real_background_prob_var)
-        prob_scale.grid(row=prob_row, column=1, sticky="ew", pady=(6, 0))
-        self.real_background_prob_label = ttk.Label(ds_frame, text="65%")
+        self.prob_scale = ttk.Scale(ds_group, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.real_background_prob_var)
+        self.prob_scale.grid(row=prob_row, column=1, sticky="ew", pady=(6, 0))
+        self.real_background_prob_label = ttk.Label(ds_group, text="65%")
         self.real_background_prob_label.grid(row=prob_row, column=2, columnspan=2, sticky=tk.W, padx=(8, 0), pady=(6, 0))
 
         domains_row = prob_row + 1
-        domains_lbl = ttk.Label(ds_frame, text="Cartelle domini Unsplash")
+        domains_lbl = ttk.Label(ds_group, text="Cartelle domini Unsplash")
         domains_lbl.grid(row=domains_row, column=0, sticky=tk.W, padx=(0, 8), pady=(6, 0))
         self._add_help_tooltip(domains_lbl, self._label_help("Cartelle domini Unsplash"))
-        ttk.Entry(ds_frame, textvariable=self.real_background_domains_var).grid(row=domains_row, column=1, columnspan=3, sticky="ew", pady=(6, 0))
+        self.domains_entry = ttk.Entry(ds_group, textvariable=self.real_background_domains_var)
+        self.domains_entry.grid(row=domains_row, column=1, columnspan=3, sticky="ew", pady=(6, 0))
         ttk.Label(
-            ds_frame,
-            text="Esempi domini: forest, industrial, kitchen, warehouse, campsite. Le cartelle vengono lette da artifacts/local/background_domains/unsplash/<dominio>.",
+            ds_group,
+            text="Esempi: forest, industrial, warehouse, corridor. Letti da artifacts/local/background_domains/unsplash/<dominio>.",
             foreground="#555555",
             wraplength=900,
         ).grid(row=domains_row + 1, column=0, columnspan=4, sticky=tk.W, pady=(2, 0))
@@ -728,10 +877,11 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.real_background_prob_var.trace_add("write", self._update_real_background_prob_label)
         self._update_real_background_prob_label()
 
-        tr_frame = ttk.LabelFrame(base_frame, text="Opzioni base training", padding=10)
-        tr_frame.pack(fill=tk.X, pady=(0, 10))
-        tr_frame.columnconfigure(1, weight=1)
-        tr_frame.columnconfigure(3, weight=1)
+        tr_group = ttk.LabelFrame(tr_frame, text="Opzioni base training", padding=10)
+        tr_group.pack(fill=tk.BOTH, expand=True)
+        tr_group.columnconfigure(1, weight=1)
+        tr_group.columnconfigure(3, weight=1)
+
         training_fields = [
             ("Training label", self.training_label_var, "Training label"),
             ("Model size", self.model_size_var, "Model size"),
@@ -743,40 +893,38 @@ class ExperimentConfiguratorApp(tk.Tk):
         for idx, (txt, var, help_key) in enumerate(training_fields):
             row, col = divmod(idx, 2)
             col_label = col * 2
-            lbl = ttk.Label(tr_frame, text=txt)
+            lbl = ttk.Label(tr_group, text=txt)
             lbl.grid(row=row, column=col_label, sticky=tk.W, padx=(0 if col_label == 0 else 10, 8), pady=4)
             self._add_help_tooltip(lbl, self._label_help(help_key))
             if txt == "Model size":
                 ttk.Combobox(
-                    tr_frame,
+                    tr_group,
                     textvariable=var,
                     values=list(MODEL_SIZE_DISPLAY_TO_CODE.keys()),
                     state="readonly",
                 ).grid(row=row, column=col_label + 1, sticky="ew", pady=4)
             elif txt == "Device":
                 ttk.Combobox(
-                    tr_frame,
+                    tr_group,
                     textvariable=var,
-                    values=["gpu", "cpu"],
+                    values=["auto", "gpu", "cpu"],
                     state="readonly",
                 ).grid(row=row, column=col_label + 1, sticky="ew", pady=4)
             elif txt == "Resume policy":
                 ttk.Combobox(
-                    tr_frame,
+                    tr_group,
                     textvariable=var,
                     values=["auto", "never"],
                     state="readonly",
                 ).grid(row=row, column=col_label + 1, sticky="ew", pady=4)
             else:
-                entry = ttk.Entry(tr_frame, textvariable=var)
+                entry = ttk.Entry(tr_group, textvariable=var)
                 entry.grid(row=row, column=col_label + 1, sticky="ew", pady=4)
                 if txt in {"Epochs", "Image size (training)"}:
                     self._bind_numeric_validation(entry, allow_decimal=False)
                 if txt == "Training label":
                     entry.insert(0, "training-name")
-        gpu_cb = ttk.Checkbutton(tr_frame, text="Require GPU", variable=self.require_gpu_var)
-        gpu_cb.grid(row=(len(training_fields) + 1) // 2, column=0, columnspan=4, sticky=tk.W, pady=(6, 0))
-        self._add_help_tooltip(gpu_cb, self._label_help("Require GPU"))
+
         self._update_base_checklist()
 
     # ------------------------------------------------------ tab Presets
@@ -792,8 +940,12 @@ class ExperimentConfiguratorApp(tk.Tk):
         self._add_help_tooltip(dp_label, self._label_help("Preset dataset"))
         self.dataset_preset_combo_gen = ttk.Combobox(dataset_preset_frame, textvariable=self.dataset_preset_var, values=self.available_dataset_presets)
         self.dataset_preset_combo_gen.grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Button(dataset_preset_frame, text="Applica preset dataset", command=self.apply_dataset_preset).grid(row=0, column=2, padx=(10, 0), pady=4)
+        dp_buttons = ttk.Frame(dataset_preset_frame)
+        dp_buttons.grid(row=0, column=2, padx=(10, 0), pady=4, sticky=tk.E)
+        ttk.Button(dp_buttons, text="Applica", command=self.apply_dataset_preset).pack(side=tk.LEFT)
+        ttk.Button(dp_buttons, text="Azzera dataset", command=self.reset_dataset_base_options).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(dataset_preset_frame, text="Applica opzioni dataset preconfigurate senza toccare la lista immagini.", foreground="#555555").grid(row=1, column=0, columnspan=3, sticky=tk.W)
+        ttk.Label(dataset_preset_frame, textvariable=self.dataset_preset_description_var, foreground="#334455", justify=tk.LEFT, wraplength=780).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
 
         training_preset_frame = ttk.LabelFrame(parent, text="Preset training", padding=10)
         training_preset_frame.pack(fill=tk.X, pady=(0, 10))
@@ -803,8 +955,12 @@ class ExperimentConfiguratorApp(tk.Tk):
         self._add_help_tooltip(tp_label, self._label_help("Preset training"))
         self.training_preset_combo_gen = ttk.Combobox(training_preset_frame, textvariable=self.training_preset_var, values=self.available_training_presets)
         self.training_preset_combo_gen.grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Button(training_preset_frame, text="Applica preset training", command=self.apply_training_preset).grid(row=0, column=2, padx=(10, 0), pady=4)
+        tp_buttons = ttk.Frame(training_preset_frame)
+        tp_buttons.grid(row=0, column=2, padx=(10, 0), pady=4, sticky=tk.E)
+        ttk.Button(tp_buttons, text="Applica", command=self.apply_training_preset).pack(side=tk.LEFT)
+        ttk.Button(tp_buttons, text="Azzera training", command=self.reset_training_base_options).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(training_preset_frame, text="Applica opzioni training preconfigurate.", foreground="#555555").grid(row=1, column=0, columnspan=3, sticky=tk.W)
+        ttk.Label(training_preset_frame, textvariable=self.training_preset_description_var, foreground="#334455", justify=tk.LEFT, wraplength=780).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
 
         load_frame = ttk.LabelFrame(parent, text="Carica config completa (opzionale)", padding=10)
         load_frame.pack(fill=tk.X, pady=(0, 10))
@@ -820,8 +976,9 @@ class ExperimentConfiguratorApp(tk.Tk):
         ttk.Button(btn_row, text="Nuova da zero", command=self.load_blank).pack(side=tk.LEFT)
         ttk.Label(
             load_frame,
-            text="Le config complete vengono cercate in configs/generated/ (default).",
+            text="Carica config completa: sostituisce i campi attuali con una config esistente in configs/generated/; utile per ripartire da un setup salvato.",
             foreground="#555555",
+            wraplength=860,
         ).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
 
     # ------------------------------------------------------ tab Avanzate
@@ -1044,34 +1201,45 @@ class ExperimentConfiguratorApp(tk.Tk):
         self.train_split_var.set(self._to_form_text(dataset.get("train_split", "")))
         self.dataset_seed_var.set(self._to_form_text(dataset.get("seed", "")))
         self.force_regenerate_var.set(bool(dataset.get("force_regenerate", False)))
+
+        dataset_settings_overrides = config.get("dataset_settings_overrides", {})
+        default_scale_min = getattr(DatasetGenerationSettings, "FIRE_SCALE_MIN", 0.05)
+        default_scale_max = getattr(DatasetGenerationSettings, "FIRE_SCALE_MAX", 0.5)
+        if isinstance(dataset_settings_overrides, dict):
+            self.fire_scale_min_var.set(self._to_form_text(dataset_settings_overrides.get("fire_scale_min", default_scale_min)))
+            self.fire_scale_max_var.set(self._to_form_text(dataset_settings_overrides.get("fire_scale_max", default_scale_max)))
+        else:
+            self.fire_scale_min_var.set(self._to_form_text(default_scale_min))
+            self.fire_scale_max_var.set(self._to_form_text(default_scale_max))
+
         image_transform_overrides = config.get("image_transform_overrides", {})
         if isinstance(image_transform_overrides, dict):
-            self.use_real_backgrounds_var.set(bool(image_transform_overrides.get("use_real_backgrounds", False)))
-            raw_prob = image_transform_overrides.get("real_background_prob", 0.65)
+            use_real = bool(image_transform_overrides.get("use_real_backgrounds", False))
+            self.use_real_backgrounds_var.set(use_real)
+            raw_prob = image_transform_overrides.get("real_background_prob", 0.65 if use_real else 0.0)
             try:
                 self.real_background_prob_var.set(max(0, min(100, int(round(float(raw_prob) * 100)))))
             except (TypeError, ValueError):
-                self.real_background_prob_var.set(65)
+                self.real_background_prob_var.set(65 if use_real else 0)
 
             raw_dirs = image_transform_overrides.get("real_background_dirs", [])
             domain_names: list[str] = []
-            if isinstance(raw_dirs, list):
+            if use_real and isinstance(raw_dirs, list):
                 for item in raw_dirs:
                     text = str(item).strip()
                     if not text:
                         continue
                     domain_names.append(Path(text).name)
-            self.real_background_domains_var.set(", ".join(domain_names) if domain_names else "forest, industrial, kitchen")
+            self.real_background_domains_var.set(", ".join(domain_names) if domain_names else "")
         else:
             self.use_real_backgrounds_var.set(False)
-            self.real_background_prob_var.set(65)
-            self.real_background_domains_var.set("forest, industrial, kitchen")
+            self.real_background_prob_var.set(0)
+            self.real_background_domains_var.set("")
 
         self.training_label_var.set(str(training.get("label", "")))
         self.model_size_var.set(self._to_model_size_display(str(training.get("model_size", ""))))
-        self.device_var.set(self._to_device_display(str(training.get("device", ""))))
-        self.require_gpu_var.set(bool(training.get("require_gpu", True)))
-        self.require_gpu_var.set(bool(training.get("require_gpu", True)))
+        device_display = self._to_device_display(str(training.get("device", "")))
+        self.device_var.set(device_display or ("gpu" if self.target_env_var.get().strip().lower() == "cloud" else "auto"))
         self.epochs_var.set(self._to_form_text(training.get("epochs", "")))
         self.batch_size_var.set(self._to_form_text(training.get("batch_size", "")))
         self.training_image_size_var.set(self._to_form_text(training.get("image_size", "")))
@@ -1140,20 +1308,30 @@ class ExperimentConfiguratorApp(tk.Tk):
         config["training"]["model_size"] = self._to_model_size_code(self.model_size_var.get())
         config["training"].pop("weights", None)
         config["training"]["device"] = self._to_device_config(self.device_var.get())
-        config["training"]["require_gpu"] = bool(self.require_gpu_var.get())
         config["training"]["epochs"] = self._parse_int(self.epochs_var.get(), "epochs")
         batch_raw = self.batch_size_var.get().strip()
         config["training"]["batch_size"] = self._parse_int(batch_raw, "batch_size") if batch_raw else 16
         config["training"]["image_size"] = self._parse_int(self.training_image_size_var.get(), "image_size (training)")
         config["training"]["resume"] = self.resume_policy_var.get().strip()
 
-        config["dataset_settings_overrides"] = self._collect_guided_overrides("dataset_settings_overrides")
+        dataset_settings_overrides = self._collect_guided_overrides("dataset_settings_overrides")
+        dataset_settings_overrides["fire_scale_min"] = self._parse_float(self.fire_scale_min_var.get(), "fire_scale_min")
+        dataset_settings_overrides["fire_scale_max"] = self._parse_float(self.fire_scale_max_var.get(), "fire_scale_max")
+        if dataset_settings_overrides["fire_scale_min"] >= dataset_settings_overrides["fire_scale_max"]:
+            raise ValueError("fire_scale_min deve essere minore di fire_scale_max")
+        config["dataset_settings_overrides"] = dataset_settings_overrides
+
         image_transform_overrides = self._collect_guided_overrides("image_transform_overrides")
-        image_transform_overrides["use_real_backgrounds"] = bool(self.use_real_backgrounds_var.get())
-        image_transform_overrides["real_background_prob"] = max(0.0, min(1.0, float(self.real_background_prob_var.get()) / 100.0))
+        use_real_backgrounds = bool(self.use_real_backgrounds_var.get())
+        image_transform_overrides["use_real_backgrounds"] = use_real_backgrounds
+        image_transform_overrides["real_background_prob"] = (
+            max(0.0, min(1.0, float(self.real_background_prob_var.get()) / 100.0))
+            if use_real_backgrounds
+            else 0.0
+        )
 
         domains_raw = self.real_background_domains_var.get().strip()
-        domains = [chunk.strip() for chunk in domains_raw.split(",") if chunk.strip()]
+        domains = [chunk.strip() for chunk in domains_raw.split(",") if chunk.strip()] if use_real_backgrounds else []
         image_transform_overrides["real_background_dirs"] = [
             (UNSPLASH_BACKGROUND_ROOT / domain).as_posix() for domain in domains
         ]
@@ -1165,11 +1343,26 @@ class ExperimentConfiguratorApp(tk.Tk):
     def save_config(self) -> None:
         try:
             config = self.build_config()
-            requested_name = Path(self.save_name_var.get().strip()).name
+            suggested_name = self._last_auto_save_name or f"{self.project_label_preview_var.get().strip() or 'config'}.yaml"
+            chosen_name = simpledialog.askstring(
+                "Nome file config",
+                "Inserisci il nome del file da salvare in configs/generated/ (solo nome, senza percorso):",
+                initialvalue=suggested_name,
+                parent=self,
+            )
+            if chosen_name is None:
+                return
+
+            requested_name = Path(chosen_name.strip()).name
             if not requested_name:
-                requested_name = "config.yaml"
+                raise ValueError("Nome file non valido")
             if not requested_name.endswith(".yaml"):
                 requested_name += ".yaml"
+
+            self._updating_save_name_programmatically = True
+            self.save_name_var.set(requested_name)
+            self._updating_save_name_programmatically = False
+            self._last_auto_save_name = requested_name
 
             target_relative = Path(GENERATED_DIR_NAME) / requested_name
             target_path = CONFIGS_DIR / target_relative

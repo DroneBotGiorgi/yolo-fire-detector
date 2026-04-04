@@ -29,7 +29,7 @@ def _device_requests_cuda(device: str) -> bool:
     if lowered.startswith("cuda"):
         return True
     if lowered == "auto":
-        return True
+        return False  # auto = prova GPU ma non la esige esplicitamente
     return any(char.isdigit() for char in lowered)
 
 
@@ -56,36 +56,36 @@ def _probe_nvidia_smi() -> tuple[bool, str]:
     return True, output or "nvidia-smi eseguito correttamente"
 
 
-def enforce_training_device(device: str | int | None, *, require_gpu: bool) -> str:
-    """Validate runtime device policy and prevent silent CPU fallback when GPU is required."""
+def enforce_training_device(device: str | int | None) -> str:
+    """Resolve and validate the training device.
+
+    Semantics:
+    - 'auto'  : prova GPU (cuda:0) se disponibile, altrimenti fallback a CPU.
+    - '0' / numeric / 'cuda:N' : GPU esplicita — errore se CUDA non disponibile.
+    - 'cpu'   : CPU forzata, nessun controllo CUDA.
+    """
     normalized = _normalize_device(device)
-    cuda_requested = _device_requests_cuda(normalized)
+    cuda_requested = _device_requests_cuda(normalized)  # False per 'auto'
 
     cuda_ready = torch.cuda.is_available()
     cuda_count = torch.cuda.device_count()
-    smi_ok, smi_details = _probe_nvidia_smi()
 
-    if require_gpu:
-        if not cuda_requested:
-            raise RuntimeError(
-                "Policy GPU obbligatoria attiva ma training.device non richiede CUDA "
-                f"(valore ricevuto: '{normalized}'). Imposta training.device a '0' o 'cuda:0'."
-            )
-        if not cuda_ready or cuda_count < 1:
-            raise RuntimeError(
-                "Policy GPU obbligatoria attiva ma CUDA non e' disponibile in PyTorch. "
-                "Fallback a CPU bloccato intenzionalmente.\n"
-                f"- torch.cuda.is_available() = {cuda_ready}\n"
-                f"- torch.cuda.device_count() = {cuda_count}\n"
-                f"- nvidia-smi ok = {smi_ok}\n"
-                f"- nvidia-smi details = {smi_details}\n"
-                "Verifica runtime GPU (es. Colab: Runtime -> Change runtime type -> GPU) e riavvia il kernel."
-            )
+    if normalized.lower() == "auto":
+        if cuda_ready and cuda_count > 0:
+            print("ℹ️ Device auto: GPU disponibile, uso cuda:0.")
+            return "0"
+        print("ℹ️ Device auto: CUDA non disponibile, fallback a CPU.")
+        return "cpu"
 
     if cuda_requested and (not cuda_ready or cuda_count < 1):
-        print(
-            "⚠️ CUDA richiesta ma non disponibile: Ultralytics potrebbe degradare a CPU. "
-            "Per bloccare questo comportamento imposta training.require_gpu=true."
+        smi_ok, smi_details = _probe_nvidia_smi()
+        raise RuntimeError(
+            "Device GPU esplicitamente richiesto ma CUDA non e' disponibile in PyTorch.\n"
+            f"- torch.cuda.is_available() = {cuda_ready}\n"
+            f"- torch.cuda.device_count() = {cuda_count}\n"
+            f"- nvidia-smi ok = {smi_ok}\n"
+            f"- nvidia-smi details = {smi_details}\n"
+            "Controlla il runtime GPU (es. Colab: Runtime -> Change runtime type -> GPU) e riavvia il kernel."
         )
 
     return normalized
@@ -159,7 +159,6 @@ def train_model(
     batch_size: int = TrainingSettings.BATCH_SIZE,
     image_size: int = TrainingSettings.IMAGE_SIZE,
     device: str = TrainingSettings.DEVICE,
-    require_gpu: bool = False,
     resume: bool = False,
     dataset_root: str = DatasetGenerationSettings.DATASET_ROOT,
     project_name: str = TrainingSettings.PROJECT_NAME,
@@ -181,10 +180,9 @@ def train_model(
     print(f"Dataset: {dataset_root}")
     print(f"Weights iniziali: {base_weights}")
     print(f"Output run: {run_dir}")
-    effective_device = enforce_training_device(device, require_gpu=require_gpu)
+    effective_device = enforce_training_device(device)
     print(f"Device richiesto: {device}")
     print(f"Device effettivo: {effective_device}")
-    print(f"GPU obbligatoria: {require_gpu}")
 
     if resume and os.path.exists(checkpoint_path):
         print(f"🔁 Resume da checkpoint: {checkpoint_path}")
@@ -234,7 +232,6 @@ def train_model(
         "batch_size": batch_size,
         "image_size": image_size,
         "device": effective_device,
-        "require_gpu": require_gpu,
         "resume": resume,
     }
     if extra_summary:

@@ -133,6 +133,45 @@
       ]
     },
     {
+      "name": "Collect Hard Negatives (Video)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/dataset/collect_hard_negatives.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--source",
+        "${input:hardNegSourceVideo}",
+        "--weights",
+        "${input:hardNegWeights}",
+        "--conf",
+        "${input:hardNegConf}",
+        "--max-samples",
+        "${input:hardNegMaxSamples}",
+        "--stride",
+        "${input:hardNegStride}"
+      ]
+    },
+    {
+      "name": "Collect Hard Negatives (Image Folder)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/dataset/collect_hard_negatives.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--source",
+        "${input:hardNegSourceFolder}",
+        "--weights",
+        "${input:hardNegWeights}",
+        "--conf",
+        "${input:hardNegConf}",
+        "--max-samples",
+        "${input:hardNegMaxSamples}",
+        "${input:hardNegFilterNegativesOnly}"
+      ]
+    },
+    {
       "name": "Export Model To Drive Registry",
       "type": "debugpy",
       "request": "launch",
@@ -181,6 +220,50 @@
   ],
   "inputs": [
     {
+      "id": "hardNegFilterNegativesOnly",
+      "type": "pickString",
+      "description": "Hard Negatives: filtra solo immagini senza label YOLO? (richiede layout standard images/+labels/ nella cartella sorgente)",
+      "options": [
+        "--filter-negatives-only",
+        ""
+      ],
+      "default": "--filter-negatives-only"
+    },
+    {
+      "id": "hardNegSourceVideo",
+      "type": "promptString",
+      "description": "Hard Negatives: percorso del video da analizzare (es. drone_footage.mp4)"
+    },
+    {
+      "id": "hardNegSourceFolder",
+      "type": "promptString",
+      "description": "Hard Negatives: cartella di immagini da analizzare (es. artifacts/local/datasets/real-val-indoor-unsplash-smallfire-222f7c3953/images/val)"
+    },
+    {
+      "id": "hardNegWeights",
+      "type": "promptString",
+      "description": "Hard Negatives: percorso modello .pt oppure 'latest'",
+      "default": "latest"
+    },
+    {
+      "id": "hardNegConf",
+      "type": "promptString",
+      "description": "Hard Negatives: soglia confidenza minima (bassa = cattura piu' FP) - consigliato 0.10-0.20",
+      "default": "0.15"
+    },
+    {
+      "id": "hardNegMaxSamples",
+      "type": "promptString",
+      "description": "Hard Negatives: numero massimo di frame FP da salvare",
+      "default": "500"
+    },
+    {
+      "id": "hardNegStride",
+      "type": "promptString",
+      "description": "Hard Negatives: video stride - analizza 1 frame ogni N (maggiore = piu' veloce, meno campioni simili)",
+      "default": "5"
+    },
+    {
       "id": "pipelineConfigPathLocalLatest",
       "type": "promptString",
       "description": "Path del file YAML della pipeline",
@@ -211,8 +294,8 @@
     {
       "id": "detectConfidence",
       "type": "promptString",
-      "description": "Soglia di confidenza per detect.py",
-      "default": "0.5"
+      "description": "Soglia di confidenza per detect.py (precision-first consigliato: 0.75)",
+      "default": "0.75"
     },
     {
       "id": "detectDevice",

@@ -1,0 +1,28 @@
+description:
+  title: Nano close-pass conferma
+  summary: Training orientato a massimizzare il recupero quando il drone è vicino al target.
+  use_when: Come secondo profilo operativo se fai passaggi manuali ravvicinati per conferma.
+  tradeoff: Più sensibile; richiede soglia inferenza più bassa solo in close-pass (0.60-0.70).
+
+training:
+  model_size: n
+  epochs: 65
+  batch_size: 16
+  image_size: 640
+  resume: auto
+
+training_overrides:
+  patience: 16
+  learning_rate_init: 0.007
+  learning_rate_final: 0.0007
+  momentum: 0.94
+  weight_decay: 0.0005
+  rotation_degrees: 10
+  translate: 0.09
+  scale: 0.4
+  flip_vertical: 0.0
+  flip_horizontal: 0.25
+  mosaic: 0.7
+  mixed_precision: true
+  overwrite_existing: true
+  verbose: true

@@ -82,7 +82,6 @@ def default_config() -> dict[str, Any]:
             "model_size": TrainingSettings.MODEL_SIZE,
             "weights": None,
             "device": TrainingSettings.DEVICE,
-            "require_gpu": False,
             "epochs": TrainingSettings.EPOCHS,
             "batch_size": TrainingSettings.BATCH_SIZE,
             "image_size": TrainingSettings.IMAGE_SIZE,
@@ -528,8 +527,6 @@ def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bo
     run_label = build_run_label(config, dataset_info["fingerprint"])
     run_dir = runs_root / run_label
     resume_enabled = resolve_resume_policy(run_dir, training_cfg["resume"])
-    require_gpu = bool(training_cfg.get("require_gpu", False))
-    training_cfg["require_gpu"] = require_gpu
 
     resolved_config = {
         "config_path": portable_path(config_path, PROJECT_ROOT),
@@ -588,7 +585,6 @@ def run_pipeline(config: dict[str, Any], config_path: Path, *, skip_training: bo
         batch_size=training_cfg["batch_size"],
         image_size=training_cfg["image_size"],
         device=training_cfg["device"],
-        require_gpu=require_gpu,
         resume=resume_enabled,
         dataset_root=str(dataset_info["root"]),
         project_name=str(runs_root),

@@ -1,0 +1,28 @@
+description:
+  title: Nano precisione ricerca (FP minimi)
+  summary: "Modalità conservativa per fase search: massima riduzione dei falsi positivi."
+  use_when: Vuoi evitare allarmi errati; accetti di doverti avvicinare per confermare.
+  tradeoff: Recall più bassa da lontano; usa conf alta in inferenza (0.80-0.85).
+
+training:
+  model_size: n
+  epochs: 60
+  batch_size: 16
+  image_size: 640
+  resume: auto
+
+training_overrides:
+  patience: 14
+  learning_rate_init: 0.008
+  learning_rate_final: 0.0008
+  momentum: 0.937
+  weight_decay: 0.0006
+  rotation_degrees: 8
+  translate: 0.08
+  scale: 0.35
+  flip_vertical: 0.0
+  flip_horizontal: 0.2
+  mosaic: 0.6
+  mixed_precision: true
+  overwrite_existing: true
+  verbose: true

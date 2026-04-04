@@ -1,0 +1,28 @@
+description:
+  title: Debug training velocissimo
+  summary: Profilo training minimale per verificare che il train parta e concluda velocemente.
+  use_when: Test tecnico locale dopo modifiche a config/pipeline.
+  tradeoff: Performance del modello non significativa.
+
+training:
+  model_size: n
+  epochs: 1
+  batch_size: 8
+  image_size: 384
+  resume: never
+
+training_overrides:
+  patience: 2
+  learning_rate_init: 0.005
+  learning_rate_final: 0.0005
+  momentum: 0.92
+  weight_decay: 0.0005
+  rotation_degrees: 5
+  translate: 0.05
+  scale: 0.2
+  flip_vertical: 0.0
+  flip_horizontal: 0.2
+  mosaic: 0.2
+  mixed_precision: false
+  overwrite_existing: true
+  verbose: false
